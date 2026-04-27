@@ -1,0 +1,15 @@
+{
+  "title": "需要安装依赖",
+  "description": "运行本应用需要以下依赖项，缺失项可一键自动安装。",
+  "checking": "正在检测依赖...",
+  "actions": {
+    "recheck": "重新检测",
+    "installMissing": "一键安装 ({{count}})"
+  },
+  "success": {
+    "title": "环境准备就绪",
+    "description": "所有依赖已安装完成，接下来配置你的 AI 大模型，即可开始使用。",
+    "configureModel": "配置大模型",
+    "skipToMain": "跳过，直接进入"
+  }
+}

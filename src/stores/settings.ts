@@ -9,15 +9,29 @@ import { hostApiFetch } from '@/lib/host-api';
 import { resolveSupportedLanguage } from '../../shared/language';
 
 type Theme = 'light' | 'dark' | 'system';
+type FontSize = 'small' | 'standard' | 'large';
 type UpdateChannel = 'stable' | 'beta' | 'dev';
+export type QuickAccessRoute =
+  | '/calendar'
+  | '/cron'
+  | '/agents'
+  | '/models'
+  | '/channels'
+  | '/skills'
+  | '/mail'
+  | '/settings'
+  | '__openclaw_external__';
 
 interface SettingsState {
   // General
   theme: Theme;
+  fontSize: FontSize;
   language: string;
+  personaPrompt: string;
   startMinimized: boolean;
   launchAtStartup: boolean;
   telemetryEnabled: boolean;
+  floatingBallEnabled: boolean;
 
   // Gateway
   gatewayAutoStart: boolean;
@@ -36,6 +50,8 @@ interface SettingsState {
 
   // UI State
   sidebarCollapsed: boolean;
+  sidebarWidth: number;
+  quickAccessRoutes: QuickAccessRoute[];
   devModeUnlocked: boolean;
 
   // Setup
@@ -44,10 +60,13 @@ interface SettingsState {
   // Actions
   init: () => Promise<void>;
   setTheme: (theme: Theme) => void;
+  setFontSize: (fontSize: FontSize) => void;
   setLanguage: (language: string) => void;
+  setPersonaPrompt: (value: string) => void;
   setStartMinimized: (value: boolean) => void;
   setLaunchAtStartup: (value: boolean) => void;
   setTelemetryEnabled: (value: boolean) => void;
+  setFloatingBallEnabled: (value: boolean) => void;
   setGatewayAutoStart: (value: boolean) => void;
   setGatewayPort: (port: number) => void;
   setProxyEnabled: (value: boolean) => void;
@@ -60,6 +79,8 @@ interface SettingsState {
   setAutoCheckUpdate: (value: boolean) => void;
   setAutoDownloadUpdate: (value: boolean) => void;
   setSidebarCollapsed: (value: boolean) => void;
+  setSidebarWidth: (value: number) => void;
+  setQuickAccessRoutes: (routes: QuickAccessRoute[]) => void;
   setDevModeUnlocked: (value: boolean) => void;
   markSetupComplete: () => void;
   resetSettings: () => void;
@@ -67,10 +88,15 @@ interface SettingsState {
 
 const defaultSettings = {
   theme: 'system' as Theme,
-  language: resolveSupportedLanguage(typeof navigator !== 'undefined' ? navigator.language : undefined),
+  fontSize: 'small' as FontSize,
+  language: resolveSupportedLanguage(
+    typeof navigator !== 'undefined' ? navigator.language : undefined
+  ),
+  personaPrompt: '',
   startMinimized: false,
   launchAtStartup: false,
   telemetryEnabled: true,
+  floatingBallEnabled: true,
   gatewayAutoStart: true,
   gatewayPort: 18789,
   proxyEnabled: false,
@@ -83,6 +109,8 @@ const defaultSettings = {
   autoCheckUpdate: true,
   autoDownloadUpdate: false,
   sidebarCollapsed: false,
+  sidebarWidth: 200,
+  quickAccessRoutes: ['/cron'] as QuickAccessRoute[],
   devModeUnlocked: false,
   setupComplete: false,
 };
@@ -117,7 +145,10 @@ export const useSettingsStore = create<SettingsState>()(
         void hostApiFetch('/api/settings/theme', {
           method: 'PUT',
           body: JSON.stringify({ value: theme }),
-        }).catch(() => { });
+        }).catch(() => {});
+      },
+      setFontSize: (fontSize) => {
+        set({ fontSize });
       },
       setLanguage: (language) => {
         const resolvedLanguage = resolveSupportedLanguage(language);
@@ -126,7 +157,14 @@ export const useSettingsStore = create<SettingsState>()(
         void hostApiFetch('/api/settings/language', {
           method: 'PUT',
           body: JSON.stringify({ value: resolvedLanguage }),
-        }).catch(() => { });
+        }).catch(() => {});
+      },
+      setPersonaPrompt: (personaPrompt) => {
+        set({ personaPrompt });
+        void hostApiFetch('/api/settings/personaPrompt', {
+          method: 'PUT',
+          body: JSON.stringify({ value: personaPrompt }),
+        }).catch(() => {});
       },
       setStartMinimized: (startMinimized) => set({ startMinimized }),
       setLaunchAtStartup: (launchAtStartup) => {
@@ -134,28 +172,35 @@ export const useSettingsStore = create<SettingsState>()(
         void hostApiFetch('/api/settings/launchAtStartup', {
           method: 'PUT',
           body: JSON.stringify({ value: launchAtStartup }),
-        }).catch(() => { });
+        }).catch(() => {});
       },
       setTelemetryEnabled: (telemetryEnabled) => {
         set({ telemetryEnabled });
         void hostApiFetch('/api/settings/telemetryEnabled', {
           method: 'PUT',
           body: JSON.stringify({ value: telemetryEnabled }),
-        }).catch(() => { });
+        }).catch(() => {});
+      },
+      setFloatingBallEnabled: (floatingBallEnabled) => {
+        set({ floatingBallEnabled });
+        void hostApiFetch('/api/settings/floatingBallEnabled', {
+          method: 'PUT',
+          body: JSON.stringify({ value: floatingBallEnabled }),
+        }).catch(() => {});
       },
       setGatewayAutoStart: (gatewayAutoStart) => {
         set({ gatewayAutoStart });
         void hostApiFetch('/api/settings/gatewayAutoStart', {
           method: 'PUT',
           body: JSON.stringify({ value: gatewayAutoStart }),
-        }).catch(() => { });
+        }).catch(() => {});
       },
       setGatewayPort: (gatewayPort) => {
         set({ gatewayPort });
         void hostApiFetch('/api/settings/gatewayPort', {
           method: 'PUT',
           body: JSON.stringify({ value: gatewayPort }),
-        }).catch(() => { });
+        }).catch(() => {});
       },
       setProxyEnabled: (proxyEnabled) => set({ proxyEnabled }),
       setProxyServer: (proxyServer) => set({ proxyServer }),
@@ -167,12 +212,18 @@ export const useSettingsStore = create<SettingsState>()(
       setAutoCheckUpdate: (autoCheckUpdate) => set({ autoCheckUpdate }),
       setAutoDownloadUpdate: (autoDownloadUpdate) => set({ autoDownloadUpdate }),
       setSidebarCollapsed: (sidebarCollapsed) => set({ sidebarCollapsed }),
+      setSidebarWidth: (sidebarWidth) =>
+        set({ sidebarWidth: Math.max(160, Math.min(320, sidebarWidth)) }),
+      setQuickAccessRoutes: (quickAccessRoutes) =>
+        set({
+          quickAccessRoutes: quickAccessRoutes.slice(0, 4),
+        }),
       setDevModeUnlocked: (devModeUnlocked) => {
         set({ devModeUnlocked });
         void hostApiFetch('/api/settings/devModeUnlocked', {
           method: 'PUT',
           body: JSON.stringify({ value: devModeUnlocked }),
-        }).catch(() => { });
+        }).catch(() => {});
       },
       markSetupComplete: () => set({ setupComplete: true }),
       resetSettings: () => set(defaultSettings),

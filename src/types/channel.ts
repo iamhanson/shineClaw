@@ -388,6 +388,13 @@ export const CHANNEL_META: Record<ChannelType, ChannelMeta> = {
         required: true,
         envVar: 'FEISHU_APP_SECRET',
       },
+      {
+        key: 'defaultRecipientId',
+        label: 'channels:meta.feishu.fields.defaultRecipientId.label',
+        type: 'text',
+        placeholder: 'channels:meta.feishu.fields.defaultRecipientId.placeholder',
+        required: false,
+      },
     ],
     instructions: [
       'channels:meta.feishu.instructions.0',

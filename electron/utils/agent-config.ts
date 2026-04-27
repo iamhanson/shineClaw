@@ -1,4 +1,4 @@
-import { access, copyFile, mkdir, readdir, rm } from 'fs/promises';
+import { access, copyFile, mkdir, readdir, readFile, rm, writeFile } from 'fs/promises';
 import { constants } from 'fs';
 import { join, normalize } from 'path';
 import { deleteAgentChannelAccounts, listConfiguredChannels, readOpenClawConfig, writeOpenClawConfig } from './channel-config';
@@ -24,6 +24,8 @@ const AGENT_RUNTIME_FILES = [
   'auth-profiles.json',
   'models.json',
 ];
+const CLAWX_AGENT_PREFS_START = '<!-- CLAWX_AGENT_PREFERENCES:START -->';
+const CLAWX_AGENT_PREFS_END = '<!-- CLAWX_AGENT_PREFERENCES:END -->';
 
 interface AgentModelConfig {
   primary?: string;
@@ -80,6 +82,7 @@ export interface AgentSummary {
   id: string;
   name: string;
   isDefault: boolean;
+  model?: string;
   modelDisplay: string;
   inheritedModel: boolean;
   workspace: string;
@@ -127,8 +130,69 @@ function slugifyAgentId(name: string): string {
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '');
 
-  if (!normalized) return 'agent';
+  if (!normalized) {
+    const pinyinLike = toPinyinLikeSlug(name);
+    if (pinyinLike) return pinyinLike;
+    return 'agent';
+  }
   if (normalized === MAIN_AGENT_ID) return 'agent';
+  return normalized;
+}
+
+// Lightweight pinyin-like fallback for common Chinese characters when
+// ASCII slugification yields an empty id.
+const PINYIN_CHAR_MAP: Record<string, string> = {
+  我: 'wo',
+  你: 'ni',
+  他: 'ta',
+  她: 'ta',
+  它: 'ta',
+  们: 'men',
+  好: 'hao',
+  很: 'hen',
+  棒: 'bang',
+  的: 'de',
+  代: 'dai',
+  码: 'ma',
+  小: 'xiao',
+  能: 'neng',
+  手: 'shou',
+  智: 'zhi',
+  体: 'ti',
+  助: 'zhu',
+  理: 'li',
+  阿: 'a',
+  山: 'shan',
+  工: 'gong',
+  作: 'zuo',
+  区: 'qu',
+};
+
+function toPinyinLikeSlug(name: string): string {
+  const parts: string[] = [];
+  for (const char of name.trim()) {
+    if (/\s/.test(char)) {
+      if (parts[parts.length - 1] !== '-') parts.push('-');
+      continue;
+    }
+    if (/[\w-]/.test(char)) {
+      parts.push(char.toLowerCase());
+      continue;
+    }
+    const mapped = PINYIN_CHAR_MAP[char];
+    if (mapped) {
+      if (parts.length > 0 && parts[parts.length - 1] !== '-') {
+        parts.push('-');
+      }
+      parts.push(mapped.toLowerCase());
+      parts.push('-');
+    }
+  }
+  const normalized = parts
+    .join('')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+  if (!normalized || normalized === MAIN_AGENT_ID) return '';
   return normalized;
 }
 
@@ -415,6 +479,67 @@ async function provisionAgentFilesystem(
   }
 }
 
+async function upsertAgentWorkspacePreferences(
+  workspacePath: string,
+  options?: { preferredSkills?: string[]; instructions?: string },
+): Promise<void> {
+  const targetWorkspace = expandPath(workspacePath);
+  const soulPath = join(targetWorkspace, 'SOUL.md');
+  const preferredSkills = Array.from(
+    new Set(
+      (options?.preferredSkills ?? [])
+        .map((skill) => skill.trim())
+        .filter(Boolean),
+    ),
+  );
+  const instructions = (options?.instructions || '').trim();
+  const shouldWrite = preferredSkills.length > 0 || instructions.length > 0;
+
+  try {
+    await ensureDir(targetWorkspace);
+    let existing = '';
+    try {
+      existing = await readFile(soulPath, 'utf-8');
+    } catch {
+      existing = '';
+    }
+
+    const sectionRegex = new RegExp(
+      `${CLAWX_AGENT_PREFS_START}[\\s\\S]*?${CLAWX_AGENT_PREFS_END}\\n*`,
+      'g',
+    );
+    const withoutExisting = existing.replace(sectionRegex, '').trimEnd();
+
+    if (!shouldWrite) {
+      const next = withoutExisting ? `${withoutExisting}\n` : '';
+      await writeFile(soulPath, next, 'utf-8');
+      return;
+    }
+
+    const lines: string[] = [
+      CLAWX_AGENT_PREFS_START,
+      '## ClawX Agent Preferences',
+    ];
+    if (preferredSkills.length > 0) {
+      lines.push(
+        `Preferred skills: ${preferredSkills.map((skill) => `\`${skill}\``).join(', ')}.`,
+      );
+    }
+    if (instructions) {
+      lines.push('', 'Additional instructions:', instructions);
+    }
+    lines.push(CLAWX_AGENT_PREFS_END);
+    const section = lines.join('\n');
+    const next = withoutExisting ? `${withoutExisting}\n\n${section}\n` : `${section}\n`;
+    await writeFile(soulPath, next, 'utf-8');
+  } catch (error) {
+    logger.warn('Failed to write agent workspace preferences', {
+      workspacePath: targetWorkspace,
+      error: String(error),
+    });
+  }
+}
+
 export function resolveAccountIdForAgent(agentId: string): string {
   return agentId === MAIN_AGENT_ID ? DEFAULT_ACCOUNT_ID : agentId;
 }
@@ -497,6 +622,7 @@ async function buildSnapshotFromConfig(config: AgentConfigDocument): Promise<Age
       id: entry.id,
       name: entry.name || (entry.id === MAIN_AGENT_ID ? MAIN_AGENT_NAME : entry.id),
       isDefault: entry.id === defaultAgentId,
+      model: typeof entry.model === 'string' && entry.model.trim() ? entry.model.trim() : undefined,
       modelDisplay: modelLabel,
       inheritedModel,
       workspace: entry.workspace || (entry.id === MAIN_AGENT_ID ? getDefaultWorkspacePath(config) : `~/.openclaw/workspace-${entry.id}`),
@@ -518,8 +644,14 @@ async function buildSnapshotFromConfig(config: AgentConfigDocument): Promise<Age
 }
 
 export async function listAgentsSnapshot(): Promise<AgentsSnapshot> {
-  const config = await readOpenClawConfig() as AgentConfigDocument;
-  return buildSnapshotFromConfig(config);
+  return withConfigLock(async () => {
+    const config = await readOpenClawConfig() as AgentConfigDocument;
+    const normalized = normalizeAgentModelRefs(config);
+    if (normalized) {
+      await writeOpenClawConfig(config);
+    }
+    return buildSnapshotFromConfig(config);
+  });
 }
 
 export async function listConfiguredAgentIds(): Promise<string[]> {
@@ -531,20 +663,40 @@ export async function listConfiguredAgentIds(): Promise<string[]> {
 
 export async function createAgent(
   name: string,
-  options?: { inheritWorkspace?: boolean },
+  options?: {
+    inheritWorkspace?: boolean;
+    model?: string;
+    preferredSkills?: string[];
+    instructions?: string;
+    agentId?: string;
+  },
 ): Promise<AgentsSnapshot> {
   return withConfigLock(async () => {
     const config = await readOpenClawConfig() as AgentConfigDocument;
     const { agentsConfig, entries, syntheticMain } = normalizeAgentsConfig(config);
     const normalizedName = normalizeAgentName(name);
-    const existingIds = new Set(entries.map((entry) => entry.id));
-    const diskIds = await listExistingAgentIdsOnDisk();
-    let nextId = slugifyAgentId(normalizedName);
+    const existingIds = new Set(entries.map((entry) => normalizeAgentIdForBinding(entry.id)));
+    const diskIds = new Set(Array.from(await listExistingAgentIdsOnDisk()).map((id) => normalizeAgentIdForBinding(id)));
+    const requestedId = normalizeAgentIdForBinding(options?.agentId ?? '');
+    const requestedIdPattern = /^[a-z0-9-]+$/;
+    let nextId = requestedId || slugifyAgentId(normalizedName);
     let suffix = 2;
 
-    while (existingIds.has(nextId) || diskIds.has(nextId)) {
-      nextId = `${slugifyAgentId(normalizedName)}-${suffix}`;
-      suffix += 1;
+    if (requestedId) {
+      if (!requestedIdPattern.test(requestedId)) {
+        throw new Error('Agent ID can only include lowercase letters, numbers, and hyphens');
+      }
+      if (requestedId === MAIN_AGENT_ID) {
+        throw new Error('Agent ID "main" is reserved');
+      }
+      if (existingIds.has(requestedId) || diskIds.has(requestedId)) {
+        throw new Error(`Agent ID "${requestedId}" already exists`);
+      }
+    } else {
+      while (existingIds.has(nextId) || diskIds.has(nextId)) {
+        nextId = `${slugifyAgentId(normalizedName)}-${suffix}`;
+        suffix += 1;
+      }
     }
 
     const nextEntries = syntheticMain ? [createImplicitMainEntry(config), ...entries.filter((_, index) => index > 0)] : [...entries];
@@ -554,6 +706,10 @@ export async function createAgent(
       workspace: `~/.openclaw/workspace-${nextId}`,
       agentDir: getDefaultAgentDirPath(nextId),
     };
+    const model = typeof options?.model === 'string' ? options.model.trim() : '';
+    if (model) {
+      newAgent.model = normalizeModelRefForAgent(config, model);
+    }
 
     if (!nextEntries.some((entry) => entry.id === MAIN_AGENT_ID) && syntheticMain) {
       nextEntries.unshift(createImplicitMainEntry(config));
@@ -566,26 +722,110 @@ export async function createAgent(
     };
 
     await provisionAgentFilesystem(config, newAgent, { inheritWorkspace: options?.inheritWorkspace });
+    await upsertAgentWorkspacePreferences(newAgent.workspace || `~/.openclaw/workspace-${nextId}`, {
+      preferredSkills: options?.preferredSkills,
+      instructions: options?.instructions,
+    });
     await writeOpenClawConfig(config);
     logger.info('Created agent config entry', { agentId: nextId, inheritWorkspace: !!options?.inheritWorkspace });
     return buildSnapshotFromConfig(config);
   });
 }
 
-export async function updateAgentName(agentId: string, name: string): Promise<AgentsSnapshot> {
+function normalizeModelRefForAgent(config: AgentConfigDocument, model: string): string {
+  const trimmed = model.trim();
+  if (!trimmed) return trimmed;
+  const providers = config.models && typeof config.models === 'object'
+    ? (config.models as Record<string, unknown>).providers
+    : undefined;
+  if (!providers || typeof providers !== 'object') return trimmed;
+
+  const providerEntries = providers as Record<string, unknown>;
+
+  const resolveProviderByModelId = (modelId: string): string | null => {
+    const matchedProviderIds = Object.entries(providerEntries)
+      .filter(([, entry]) => {
+        if (!entry || typeof entry !== 'object') return false;
+        const models = (entry as Record<string, unknown>).models;
+        if (!Array.isArray(models)) return false;
+        return models.some((candidate) => {
+          if (!candidate || typeof candidate !== 'object') return false;
+          return (candidate as Record<string, unknown>).id === modelId;
+        });
+      })
+      .map(([providerId]) => providerId);
+
+    return matchedProviderIds.length === 1 ? matchedProviderIds[0] : null;
+  };
+
+  if (trimmed.includes('/')) {
+    const [providerPrefix, ...rest] = trimmed.split('/');
+    const modelId = rest.join('/').trim();
+    if (!providerPrefix || !modelId) return trimmed;
+
+    if (Object.prototype.hasOwnProperty.call(providerEntries, providerPrefix)) {
+      return trimmed;
+    }
+
+    const mappedProviderId = resolveProviderByModelId(modelId);
+    if (mappedProviderId) {
+      return `${mappedProviderId}/${modelId}`;
+    }
+    return trimmed;
+  }
+
+  const mappedProviderId = resolveProviderByModelId(trimmed);
+  if (mappedProviderId) {
+    return `${mappedProviderId}/${trimmed}`;
+  }
+  return trimmed;
+}
+
+function normalizeAgentModelRefs(config: AgentConfigDocument): boolean {
+  const { agentsConfig, entries } = normalizeAgentsConfig(config);
+  let changed = false;
+  const nextEntries = entries.map((entry) => {
+    const model = entry.model;
+    if (typeof model !== 'string') return entry;
+    const normalizedModel = normalizeModelRefForAgent(config, model);
+    if (normalizedModel !== model) {
+      changed = true;
+      return { ...entry, model: normalizedModel };
+    }
+    return entry;
+  });
+  if (!changed) return false;
+  config.agents = {
+    ...agentsConfig,
+    list: nextEntries,
+  };
+  return true;
+}
+
+export async function updateAgentConfig(
+  agentId: string,
+  patch: { name?: string; model?: string | null },
+): Promise<AgentsSnapshot> {
   return withConfigLock(async () => {
     const config = await readOpenClawConfig() as AgentConfigDocument;
     const { agentsConfig, entries } = normalizeAgentsConfig(config);
-    const normalizedName = normalizeAgentName(name);
     const index = entries.findIndex((entry) => entry.id === agentId);
     if (index === -1) {
       throw new Error(`Agent "${agentId}" not found`);
     }
-
-    entries[index] = {
-      ...entries[index],
-      name: normalizedName,
-    };
+    const nextEntry: AgentListEntry = { ...entries[index] };
+    if (typeof patch.name === 'string') {
+      nextEntry.name = normalizeAgentName(patch.name);
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, 'model')) {
+      const modelValue = typeof patch.model === 'string' ? patch.model.trim() : '';
+      if (!modelValue) {
+        delete nextEntry.model;
+      } else {
+        nextEntry.model = normalizeModelRefForAgent(config, modelValue);
+      }
+    }
+    entries[index] = nextEntry;
 
     config.agents = {
       ...agentsConfig,
@@ -593,7 +833,7 @@ export async function updateAgentName(agentId: string, name: string): Promise<Ag
     };
 
     await writeOpenClawConfig(config);
-    logger.info('Updated agent name', { agentId, name: normalizedName });
+    logger.info('Updated agent config', { agentId, patch: { name: patch.name, model: patch.model } });
     return buildSnapshotFromConfig(config);
   });
 }

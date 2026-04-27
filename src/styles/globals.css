@@ -4,50 +4,50 @@
 
 @layer base {
   :root {
-    /* #f1ede1 */
-    --background: 45 36.4% 91.4%;
-    --foreground: 222.2 84% 4.9%;
+    /* Practical Geek — cool gray light */
+    --background: 220 14% 96%;
+    --foreground: 220 20% 10%;
     --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
+    --card-foreground: 220 20% 10%;
     --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
-    --primary: 221.2 83.2% 53.3%;
-    --primary-foreground: 210 40% 98%;
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 221.2 83.2% 53.3%;
+    --popover-foreground: 220 20% 10%;
+    --primary: 142 71% 45%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 220 13% 91%;
+    --secondary-foreground: 220 20% 10%;
+    --muted: 220 14% 93%;
+    --muted-foreground: 220 9% 46%;
+    --accent: 220 14% 93%;
+    --accent-foreground: 220 20% 10%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 220 13% 87%;
+    --input: 220 13% 87%;
+    --ring: 142 71% 45%;
     --radius: 0.5rem;
   }
 
-  /* Neutral deep-gray dark palette */
+  /* Practical Geek — near-black blue dark */
   .dark {
-    --background: 240 4% 11%;
-    --foreground: 210 20% 96%;
-    --card: 240 3% 14%;
-    --card-foreground: 210 20% 96%;
-    --popover: 240 3% 14%;
-    --popover-foreground: 210 20% 96%;
-    --primary: 217.2 91.2% 59.8%;
-    --primary-foreground: 210 40% 98%;
-    --secondary: 240 3% 18%;
-    --secondary-foreground: 210 20% 96%;
-    --muted: 240 3% 18%;
-    --muted-foreground: 220 8% 72%;
-    --accent: 240 3% 22%;
-    --accent-foreground: 210 20% 96%;
+    --background: 216 28% 5%;
+    --foreground: 210 20% 92%;
+    --card: 214 25% 9%;
+    --card-foreground: 210 20% 92%;
+    --popover: 214 25% 9%;
+    --popover-foreground: 210 20% 92%;
+    --primary: 142 71% 45%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 215 20% 14%;
+    --secondary-foreground: 210 20% 92%;
+    --muted: 215 20% 14%;
+    --muted-foreground: 218 11% 55%;
+    --accent: 215 18% 18%;
+    --accent-foreground: 210 20% 92%;
     --destructive: 0 65% 42%;
-    --destructive-foreground: 210 20% 96%;
-    --border: 240 3% 24%;
-    --input: 240 3% 18%;
-    --ring: 217.2 91.2% 59.8%;
+    --destructive-foreground: 210 20% 92%;
+    --border: 215 14% 20%;
+    --input: 215 20% 14%;
+    --ring: 142 71% 45%;
   }
 }
 
@@ -60,6 +60,17 @@
     @apply bg-background text-foreground;
     font-feature-settings: "rlig" 1, "calt" 1;
   }
+}
+
+/* Font size presets */
+.font-size-small {
+  font-size: 14px;
+}
+.font-size-standard {
+  font-size: 15px;
+}
+.font-size-large {
+  font-size: 17px;
 }
 
 /* Custom scrollbar */
@@ -78,6 +89,37 @@
 
 ::-webkit-scrollbar-thumb:hover {
   @apply bg-muted-foreground/30;
+}
+
+/* Sidebar session list scrollbar: thin and visible only on hover */
+.session-list-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+.session-list-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.session-list-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.session-list-scrollbar::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 9999px;
+}
+
+.session-list-scrollbar:hover {
+  scrollbar-color: hsl(var(--muted-foreground) / 0.28) transparent;
+}
+
+.session-list-scrollbar:hover::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted-foreground) / 0.28);
+}
+
+.session-list-scrollbar:hover::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground) / 0.42);
 }
 
 /* macOS traffic light spacing */

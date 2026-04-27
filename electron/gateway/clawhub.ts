@@ -11,12 +11,14 @@ import { getOpenClawConfigDir, ensureDir, getClawHubCliBinPath, getClawHubCliEnt
 export interface ClawHubSearchParams {
     query: string;
     limit?: number;
+    source?: 'clawhub' | 'tencent';
 }
 
 export interface ClawHubInstallParams {
     slug: string;
     version?: string;
     force?: boolean;
+    source?: 'clawhub' | 'tencent';
 }
 
 export interface ClawHubUninstallParams {
@@ -46,6 +48,10 @@ export class ClawHubService {
     private cliEntryPath: string;
     private useNodeRunner: boolean;
     private ansiRegex: RegExp;
+    private static readonly TENCENT_HUB_SITE =
+      process.env.CLAWX_TENCENT_HUB_SITE || 'https://clawhub.tencent.com';
+    private static readonly TENCENT_HUB_REGISTRY =
+      process.env.CLAWX_TENCENT_HUB_REGISTRY || 'https://clawhub.tencent.com/api';
 
     constructor() {
         // Use the user's OpenClaw config directory (~/.openclaw) for skill management
@@ -68,6 +74,16 @@ export class ClawHubService {
         const csi = String.fromCharCode(155);
         const pattern = `(?:${esc}|${csi})[[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]`;
         this.ansiRegex = new RegExp(pattern, 'g');
+    }
+
+    private buildSourceArgs(source?: 'clawhub' | 'tencent'): string[] {
+        if (source !== 'tencent') return [];
+        return [
+            '--site',
+            ClawHubService.TENCENT_HUB_SITE,
+            '--registry',
+            ClawHubService.TENCENT_HUB_REGISTRY,
+        ];
     }
 
     private stripAnsi(line: string): string {
@@ -200,10 +216,10 @@ export class ClawHubService {
         try {
             // If query is empty, use 'explore' to show trending skills
             if (!params.query || params.query.trim() === '') {
-                return this.explore({ limit: params.limit });
+                return this.explore({ limit: params.limit, source: params.source });
             }
 
-            const args = ['search', params.query];
+            const args = [...this.buildSourceArgs(params.source), 'search', params.query];
             if (params.limit) {
                 args.push('--limit', String(params.limit));
             }
@@ -264,9 +280,9 @@ export class ClawHubService {
     /**
      * Explore trending skills
      */
-    async explore(params: { limit?: number } = {}): Promise<ClawHubSkillResult[]> {
+    async explore(params: { limit?: number; source?: 'clawhub' | 'tencent' } = {}): Promise<ClawHubSkillResult[]> {
         try {
-            const args = ['explore'];
+            const args = [...this.buildSourceArgs(params.source), 'explore'];
             if (params.limit) {
                 args.push('--limit', String(params.limit));
             }
@@ -301,7 +317,7 @@ export class ClawHubService {
      * Install a skill
      */
     async install(params: ClawHubInstallParams): Promise<void> {
-        const args = ['install', params.slug];
+        const args = [...this.buildSourceArgs(params.source), 'install', params.slug];
 
         if (params.version) {
             args.push('--version', params.version);

@@ -8,4 +8,5 @@ export interface HostApiContext {
   clawHubService: ClawHubService;
   eventBus: HostEventBus;
   mainWindow: BrowserWindow | null;
+  setFloatingBallEnabled?: (enabled: boolean) => void;
 }

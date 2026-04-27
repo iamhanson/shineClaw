@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { RefreshCw, Trash2, AlertCircle, Plus } from 'lucide-react';
+import { RefreshCw, Trash2, AlertCircle, Plus, X, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -51,6 +51,16 @@ interface AgentItem {
   name: string;
 }
 
+interface PairingRequestItem {
+  id: string;
+  userId: string;
+  code: string;
+  createdAt: string;
+  lastSeenAt?: string;
+  accountId?: string;
+  meta?: Record<string, string>;
+}
+
 interface DeleteTarget {
   channelType: string;
   accountId?: string;
@@ -87,17 +97,30 @@ export function Channels() {
   const [allowExistingConfigInModal, setAllowExistingConfigInModal] = useState(true);
   const [allowEditAccountIdInModal, setAllowEditAccountIdInModal] = useState(false);
   const [existingAccountIdsForModal, setExistingAccountIdsForModal] = useState<string[]>([]);
-  const [initialConfigValuesForModal, setInitialConfigValuesForModal] = useState<Record<string, string> | undefined>(undefined);
+  const [initialConfigValuesForModal, setInitialConfigValuesForModal] = useState<
+    Record<string, string> | undefined
+  >(undefined);
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
+  const [pairingModalOpen, setPairingModalOpen] = useState(false);
+  const [pairingModalChannelType, setPairingModalChannelType] = useState<string>('');
+  const [pairingModalAccountId, setPairingModalAccountId] = useState<string>('');
+  const [pairingRequests, setPairingRequests] = useState<PairingRequestItem[]>([]);
+  const [pairingRequestsLoading, setPairingRequestsLoading] = useState(false);
+  const [pairingRequestsError, setPairingRequestsError] = useState<string | null>(null);
+  const hasLoadedOnceRef = useRef(false);
 
   const displayedChannelTypes = getPrimaryChannels();
 
-  const fetchPageData = useCallback(async () => {
-    setLoading(true);
+  const fetchPageData = useCallback(async (options?: { force?: boolean }) => {
+    if (!hasLoadedOnceRef.current) {
+      setLoading(true);
+    }
     setError(null);
     try {
       const [channelsRes, agentsRes] = await Promise.all([
-        hostApiFetch<{ success: boolean; channels?: ChannelGroupItem[]; error?: string }>('/api/channels/accounts'),
+        hostApiFetch<{ success: boolean; channels?: ChannelGroupItem[]; error?: string }>(
+          `/api/channels/accounts?probe=0${options?.force ? '&force=1' : ''}`
+        ),
         hostApiFetch<{ success: boolean; agents?: AgentItem[]; error?: string }>('/api/agents'),
       ]);
 
@@ -111,6 +134,7 @@ export function Channels() {
 
       setChannelGroups(channelsRes.channels || []);
       setAgents(agentsRes.agents || []);
+      hasLoadedOnceRef.current = true;
     } catch (fetchError) {
       setError(String(fetchError));
     } finally {
@@ -144,7 +168,7 @@ export function Channels() {
 
   const configuredTypes = useMemo(
     () => channelGroups.map((group) => group.channelType),
-    [channelGroups],
+    [channelGroups]
   );
 
   const groupedByType = useMemo(() => {
@@ -155,14 +179,16 @@ export function Channels() {
     const known = displayedChannelTypes
       .map((type) => groupedByType[type])
       .filter((group): group is ChannelGroupItem => Boolean(group));
-    const unknown = channelGroups.filter((group) => !displayedChannelTypes.includes(group.channelType as ChannelType));
+    const unknown = channelGroups.filter(
+      (group) => !displayedChannelTypes.includes(group.channelType as ChannelType)
+    );
     return [...known, ...unknown];
   }, [channelGroups, displayedChannelTypes, groupedByType]);
 
   const unsupportedGroups = displayedChannelTypes.filter((type) => !configuredTypes.includes(type));
 
   const handleRefresh = () => {
-    void fetchPageData();
+    void fetchPageData({ force: true });
   };
 
   const handleBindAgent = async (channelType: string, accountId: string, agentId: string) => {
@@ -191,9 +217,12 @@ export function Channels() {
       const suffix = deleteTarget.accountId
         ? `?accountId=${encodeURIComponent(deleteTarget.accountId)}`
         : '';
-      await hostApiFetch(`/api/channels/config/${encodeURIComponent(deleteTarget.channelType)}${suffix}`, {
-        method: 'DELETE',
-      });
+      await hostApiFetch(
+        `/api/channels/config/${encodeURIComponent(deleteTarget.channelType)}${suffix}`,
+        {
+          method: 'DELETE',
+        }
+      );
       setChannelGroups((prev) => removeDeletedTarget(prev, deleteTarget));
       toast.success(deleteTarget.accountId ? t('toast.accountDeleted') : t('toast.channelDeleted'));
       // Channel reload is debounced in main process; pull again shortly to
@@ -217,25 +246,56 @@ export function Channels() {
     return nextAccountId;
   };
 
+  const loadPairingRequests = useCallback(async (channelType: string, accountId: string) => {
+    setPairingRequestsLoading(true);
+    setPairingRequestsError(null);
+    try {
+      const query = new URLSearchParams({
+        channelType,
+        accountId,
+        limit: '100',
+      });
+      const response = await hostApiFetch<{
+        success?: boolean;
+        error?: string;
+        requests?: PairingRequestItem[];
+      }>(`/api/channels/pairing-requests?${query.toString()}`);
+      if (!response.success) {
+        throw new Error(response.error || 'Failed to load pairing requests');
+      }
+      setPairingRequests(response.requests || []);
+    } catch (requestError) {
+      setPairingRequests([]);
+      setPairingRequestsError(String(requestError));
+    } finally {
+      setPairingRequestsLoading(false);
+    }
+  }, []);
+
+  const openPairingRequestsModal = useCallback((channelType: string, accountId: string) => {
+    setPairingModalOpen(true);
+    setPairingModalChannelType(channelType);
+    setPairingModalAccountId(accountId);
+    void loadPairingRequests(channelType, accountId);
+  }, [loadPairingRequests]);
+
   if (loading) {
     return (
-      <div className="flex flex-col -m-6 dark:bg-background min-h-[calc(100vh-2.5rem)] items-center justify-center">
+      <div className="flex flex-col -m-6 min-h-[calc(100vh-2.5rem)] items-center justify-center bg-[radial-gradient(circle_at_top,_rgba(16,185,129,0.10),_transparent_28%),linear-gradient(180deg,rgba(255,255,255,0.72),rgba(255,255,255,0))] dark:bg-[radial-gradient(circle_at_top,_rgba(16,185,129,0.12),_transparent_24%),linear-gradient(180deg,rgba(255,255,255,0.02),rgba(255,255,255,0))]">
         <LoadingSpinner size="lg" />
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col -m-6 dark:bg-background h-[calc(100vh-2.5rem)] overflow-hidden">
+    <div className="flex flex-col -m-6 h-[calc(100vh-2.5rem)] overflow-hidden bg-[radial-gradient(circle_at_top,_rgba(16,185,129,0.10),_transparent_28%),linear-gradient(180deg,rgba(255,255,255,0.72),rgba(255,255,255,0))] dark:bg-[radial-gradient(circle_at_top,_rgba(16,185,129,0.12),_transparent_24%),linear-gradient(180deg,rgba(255,255,255,0.02),rgba(255,255,255,0))]">
       <div className="w-full max-w-5xl mx-auto flex flex-col h-full p-10 pt-16">
         <div className="flex flex-col md:flex-row md:items-start justify-between mb-12 shrink-0 gap-4">
           <div>
-            <h1 className="text-5xl md:text-6xl font-serif text-foreground mb-3 font-normal tracking-tight" style={{ fontFamily: 'Georgia, Cambria, "Times New Roman", Times, serif' }}>
+            <h1 className="text-5xl md:text-6xl font-heading text-foreground mb-3 font-normal tracking-tight">
               {t('title')}
             </h1>
-            <p className="text-[17px] text-foreground/70 font-medium">
-              {t('subtitle')}
-            </p>
+            <p className="text-[17px] text-foreground/70 font-medium">{t('subtitle')}</p>
           </div>
 
           <div className="flex items-center gap-3 md:mt-2">
@@ -264,20 +324,21 @@ export function Channels() {
           {error && (
             <div className="mb-8 p-4 rounded-xl border border-destructive/50 bg-destructive/10 flex items-center gap-3">
               <AlertCircle className="h-5 w-5 text-destructive" />
-              <span className="text-destructive text-sm font-medium">
-                {error}
-              </span>
+              <span className="text-destructive text-sm font-medium">{error}</span>
             </div>
           )}
 
           {configuredGroups.length > 0 && (
             <div className="mb-12">
-              <h2 className="text-3xl font-serif text-foreground mb-6 font-normal tracking-tight" style={{ fontFamily: 'Georgia, Cambria, "Times New Roman", Times, serif' }}>
+              <h2 className="text-3xl font-heading text-foreground mb-6 font-normal tracking-tight">
                 {t('configured')}
               </h2>
               <div className="space-y-4">
                 {configuredGroups.map((group) => (
-                  <div key={group.channelType} className="rounded-2xl border border-black/10 dark:border-white/10 p-4 bg-transparent">
+                  <div
+                    key={group.channelType}
+                    className="rounded-2xl border border-black/10 dark:border-white/10 p-4 bg-transparent"
+                  >
                     <div className="flex items-center justify-between gap-2 mb-3">
                       <div className="flex items-center gap-3 min-w-0">
                         <div className="h-[40px] w-[40px] shrink-0 flex items-center justify-center text-foreground bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/10 rounded-full shadow-sm">
@@ -309,18 +370,22 @@ export function Channels() {
                           variant="outline"
                           className="h-8 text-xs rounded-full"
                           onClick={() => {
-                            const shouldUseGeneratedAccountId = !usesPluginManagedQrAccounts(group.channelType);
+                            const shouldUseGeneratedAccountId = !usesPluginManagedQrAccounts(
+                              group.channelType
+                            );
                             const nextAccountId = shouldUseGeneratedAccountId
                               ? createNewAccountId(
-                                group.channelType,
-                                group.accounts.map((item) => item.accountId),
-                              )
+                                  group.channelType,
+                                  group.accounts.map((item) => item.accountId)
+                                )
                               : undefined;
                             setSelectedChannelType(group.channelType as ChannelType);
                             setSelectedAccountId(nextAccountId);
                             setAllowExistingConfigInModal(false);
                             setAllowEditAccountIdInModal(shouldUseGeneratedAccountId);
-                            setExistingAccountIdsForModal(group.accounts.map((item) => item.accountId));
+                            setExistingAccountIdsForModal(
+                              group.accounts.map((item) => item.accountId)
+                            );
                             setInitialConfigValuesForModal(undefined);
                             setShowConfigModal(true);
                           }}
@@ -347,43 +412,63 @@ export function Channels() {
                             ? t('account.mainAccount')
                             : account.name;
                         return (
-                        <div key={`${group.channelType}-${account.accountId}`} className="rounded-xl bg-black/5 dark:bg-white/5 px-3 py-2">
-                          <div className="flex items-center justify-between gap-3">
-                            <div className="min-w-0">
-                              <div className="flex items-center gap-2">
-                                <p className="text-[13px] font-medium text-foreground truncate">{displayName}</p>
+                          <div
+                            key={`${group.channelType}-${account.accountId}`}
+                            className="rounded-xl bg-black/5 dark:bg-white/5 px-3 py-2"
+                          >
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <p className="text-[13px] font-medium text-foreground truncate">
+                                    {displayName}
+                                  </p>
+                                </div>
+                                {account.lastError && (
+                                  <div className="text-[12px] text-destructive mt-1">
+                                    {account.lastError}
+                                  </div>
+                                )}
                               </div>
-                              {account.lastError && (
-                                <div className="text-[12px] text-destructive mt-1">{account.lastError}</div>
-                              )}
-                            </div>
 
-                            <div className="flex items-center gap-2">
-                              <span className="text-xs text-muted-foreground">{t('account.bindAgentLabel')}</span>
-                              <select
-                                className="h-8 rounded-lg border border-black/10 dark:border-white/10 bg-background px-2 text-xs"
-                                value={account.agentId || ''}
-                                onChange={(event) => {
-                                  void handleBindAgent(group.channelType, account.accountId, event.target.value);
-                                }}
-                              >
-                                <option value="">{t('account.unassigned')}</option>
-                                {agents.map((agent) => (
-                                  <option key={agent.id} value={agent.id}>{agent.name}</option>
-                                ))}
-                              </select>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                className="h-8 text-xs rounded-full"
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs text-muted-foreground">
+                                  {t('account.bindAgentLabel')}
+                                </span>
+                                <select
+                                  className="h-8 rounded-lg border border-black/10 dark:border-white/10 bg-background px-2 text-xs"
+                                  value={account.agentId || ''}
+                                  onChange={(event) => {
+                                    void handleBindAgent(
+                                      group.channelType,
+                                      account.accountId,
+                                      event.target.value
+                                    );
+                                  }}
+                                >
+                                  <option value="">{t('account.unassigned')}</option>
+                                  {agents.map((agent) => (
+                                    <option key={agent.id} value={agent.id}>
+                                      {agent.name}
+                                    </option>
+                                  ))}
+                                </select>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-8 text-xs rounded-full"
                                   onClick={() => {
                                     void (async () => {
                                       try {
                                         const accountParam = `?accountId=${encodeURIComponent(account.accountId)}`;
-                                        const result = await hostApiFetch<{ success: boolean; values?: Record<string, string> }>(
+                                        const result = await hostApiFetch<{
+                                          success: boolean;
+                                          values?: Record<string, string>;
+                                        }>(
                                           `/api/channels/config/${encodeURIComponent(group.channelType)}${accountParam}`
                                         );
-                                        setInitialConfigValuesForModal(result.success ? (result.values || {}) : undefined);
+                                        setInitialConfigValuesForModal(
+                                          result.success ? result.values || {} : undefined
+                                        );
                                       } catch {
                                         // Fall back to modal-side loading when prefetch fails.
                                         setInitialConfigValuesForModal(undefined);
@@ -397,20 +482,40 @@ export function Channels() {
                                     })();
                                   }}
                                 >
-                                {t('account.edit')}
-                              </Button>
-                              <Button
-                                size="icon"
-                                variant="ghost"
-                                className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-                                onClick={() => setDeleteTarget({ channelType: group.channelType, accountId: account.accountId })}
-                                title={t('account.delete')}
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
+                                  {t('account.edit')}
+                                </Button>
+                                {group.channelType === 'feishu' && (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-8 text-xs rounded-full"
+                                    onClick={() =>
+                                      openPairingRequestsModal(
+                                        group.channelType,
+                                        account.accountId
+                                      )
+                                    }
+                                  >
+                                    {t('account.viewPairingRequests')}
+                                  </Button>
+                                )}
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                                  onClick={() =>
+                                    setDeleteTarget({
+                                      channelType: group.channelType,
+                                      accountId: account.accountId,
+                                    })
+                                  }
+                                  title={t('account.delete')}
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </div>
                             </div>
                           </div>
-                        </div>
                         );
                       })}
                     </div>
@@ -421,7 +526,7 @@ export function Channels() {
           )}
 
           <div className="mb-8">
-            <h2 className="text-3xl font-serif text-foreground mb-6 font-normal tracking-tight" style={{ fontFamily: 'Georgia, Cambria, "Times New Roman", Times, serif' }}>
+            <h2 className="text-3xl font-heading text-foreground mb-6 font-normal tracking-tight">
               {t('supportedChannels')}
             </h2>
 
@@ -449,9 +554,14 @@ export function Channels() {
                     </div>
                     <div className="flex flex-col flex-1 min-w-0 py-0.5 mt-1">
                       <div className="flex items-center gap-2 mb-1">
-                        <h3 className="text-[16px] font-semibold text-foreground truncate">{meta.name}</h3>
+                        <h3 className="text-[16px] font-semibold text-foreground truncate">
+                          {meta.name}
+                        </h3>
                         {meta.isPlugin && (
-                          <Badge variant="secondary" className="font-mono text-[10px] font-medium px-2 py-0.5 rounded-full bg-black/[0.04] dark:bg-white/[0.08] border-0 shadow-none text-foreground/70">
+                          <Badge
+                            variant="secondary"
+                            className="font-mono text-[10px] font-medium px-2 py-0.5 rounded-full bg-black/[0.04] dark:bg-white/[0.08] border-0 shadow-none text-foreground/70"
+                          >
                             {t('pluginBadge')}
                           </Badge>
                         )}
@@ -512,6 +622,127 @@ export function Channels() {
         }}
         onCancel={() => setDeleteTarget(null)}
       />
+
+      {pairingModalOpen && (
+        <div
+          className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              setPairingModalOpen(false);
+            }
+          }}
+        >
+          <div
+            className="w-full max-w-2xl max-h-[85vh] overflow-hidden rounded-xl border border-black/10 dark:border-white/10 bg-card shadow-2xl"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-4 py-3 border-b border-black/10 dark:border-white/10">
+              <div>
+                <h3 className="text-[16px] font-semibold text-foreground">
+                  {t('account.pairingRequestsTitle')}
+                </h3>
+                <p className="text-[12px] text-muted-foreground mt-0.5">
+                  {t('account.pairingRequestsSubtitle', {
+                    channel: pairingModalChannelType,
+                    accountId: pairingModalAccountId,
+                  })}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-8 text-xs rounded-full"
+                  onClick={() => {
+                    void loadPairingRequests(pairingModalChannelType, pairingModalAccountId);
+                  }}
+                  disabled={pairingRequestsLoading}
+                >
+                  {pairingRequestsLoading ? (
+                    <>
+                      <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                      {t('refresh')}
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+                      {t('refresh')}
+                    </>
+                  )}
+                </Button>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-8 w-8 rounded-full"
+                  onClick={() => setPairingModalOpen(false)}
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+
+            <div className="max-h-[65vh] overflow-y-auto p-4 space-y-3">
+              {pairingRequestsError && (
+                <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-[12px] text-destructive">
+                  {pairingRequestsError}
+                </div>
+              )}
+
+              {!pairingRequestsLoading && !pairingRequestsError && pairingRequests.length === 0 && (
+                <div className="rounded-lg border border-black/10 dark:border-white/10 bg-muted/30 p-4 text-[13px] text-muted-foreground">
+                  {t('account.noPairingRequests')}
+                </div>
+              )}
+
+              {pairingRequestsLoading && (
+                <div className="rounded-lg border border-black/10 dark:border-white/10 bg-muted/30 p-4 flex items-center text-[13px] text-muted-foreground">
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  {t('dialog.loadingConfig')}
+                </div>
+              )}
+
+              {pairingRequests.map((request) => (
+                <div
+                  key={`${request.code}:${request.id}:${request.createdAt}`}
+                  className="rounded-lg border border-black/10 dark:border-white/10 bg-black/[0.02] dark:bg-white/[0.02] p-3 space-y-2"
+                >
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[12px]">
+                    <div className="text-muted-foreground">
+                      {t('account.pairingRequest.userId')}: <span className="font-mono text-foreground">{request.userId || request.id}</span>
+                    </div>
+                    <div className="text-muted-foreground">
+                      {t('account.pairingRequest.code')}: <span className="font-mono text-foreground">{request.code}</span>
+                    </div>
+                    <div className="text-muted-foreground">
+                      {t('account.pairingRequest.createdAt')}:{' '}
+                      <span className="text-foreground">
+                        {Number.isFinite(Date.parse(request.createdAt))
+                          ? new Date(request.createdAt).toLocaleString()
+                          : request.createdAt}
+                      </span>
+                    </div>
+                    {request.lastSeenAt && (
+                      <div className="text-muted-foreground">
+                        {t('account.pairingRequest.lastSeenAt')}:{' '}
+                        <span className="text-foreground">
+                          {Number.isFinite(Date.parse(request.lastSeenAt))
+                            ? new Date(request.lastSeenAt).toLocaleString()
+                            : request.lastSeenAt}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                  {request.meta && Object.keys(request.meta).length > 0 && (
+                    <div className="rounded-md bg-muted/40 px-2 py-1.5 text-[11px] font-mono text-muted-foreground overflow-x-auto">
+                      {JSON.stringify(request.meta)}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

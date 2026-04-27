@@ -4,6 +4,7 @@
  * message content formats returned by the Gateway.
  */
 import type { RawMessage, ContentBlock } from '@/stores/chat';
+import i18n from '@/i18n';
 
 /**
  * Clean Gateway metadata from user message text for display.
@@ -214,10 +215,12 @@ export function formatTimestamp(timestamp: unknown): string {
   const date = new Date(ms);
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
+  const locale = i18n.resolvedLanguage || i18n.language || (typeof navigator !== 'undefined' ? navigator.language : 'en');
+  const rtf = new Intl.RelativeTimeFormat(locale, { numeric: 'auto' });
 
-  if (diffMs < 60000) return 'just now';
-  if (diffMs < 3600000) return `${Math.floor(diffMs / 60000)}m ago`;
-  if (diffMs < 86400000) return `${Math.floor(diffMs / 3600000)}h ago`;
+  if (diffMs < 60000) return rtf.format(0, 'second');
+  if (diffMs < 3600000) return rtf.format(-Math.floor(diffMs / 60000), 'minute');
+  if (diffMs < 86400000) return rtf.format(-Math.floor(diffMs / 3600000), 'hour');
 
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }

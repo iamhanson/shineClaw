@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { useUpdateStore } from '@/stores/update';
 import { useTranslation } from 'react-i18next';
+import { cn } from '@/lib/utils';
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return '0 B';
@@ -45,6 +46,21 @@ export function UpdateSettings() {
     await checkForUpdates();
   }, [checkForUpdates, clearError]);
 
+  const normalizeUpdateError = useCallback(
+    (raw: string | null | undefined): string | null => {
+      if (!raw) return null;
+      if (
+        raw === 'UPDATE_CHECK_SKIPPED_DEV_MODE'
+        || raw === 'UPDATE_CHECK_NO_RESULT_DEV_MODE'
+        || raw.includes('app is not packaged')
+      ) {
+        return t('updates.status.devModeSkipped');
+      }
+      return raw;
+    },
+    [t]
+  );
+
   const renderStatusIcon = () => {
     switch (status) {
       case 'checking':
@@ -75,7 +91,7 @@ export function UpdateSettings() {
       case 'downloaded':
         return t('updates.status.downloaded', { version: updateInfo?.version });
       case 'error':
-        return error || t('updates.status.failed');
+        return normalizeUpdateError(error) || t('updates.status.failed');
       case 'not-available':
         return t('updates.status.latest');
       default:
@@ -142,76 +158,71 @@ export function UpdateSettings() {
     return (
       <div className="flex items-center gap-2 text-muted-foreground">
         <Loader2 className="h-4 w-4 animate-spin" />
-        <span>Loading...</span>
+        <span>{t('common:status.loading')}</span>
       </div>
     );
   }
 
   return (
-    <div className="space-y-4">
-      {/* Current Version */}
-      <div className="flex items-center justify-between">
-        <div className="space-y-1">
-          <p className="text-sm font-medium">{t('updates.currentVersion')}</p>
-          <p className="text-2xl font-bold">v{currentVersion}</p>
+    <div className="space-y-3">
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex items-center gap-3 min-w-0">
+          <div
+            className={cn(
+              'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg',
+              status === 'error' && 'text-destructive',
+              (status === 'available' || status === 'downloaded') && 'text-primary',
+              status !== 'error' &&
+                status !== 'available' &&
+                status !== 'downloaded' &&
+                'text-muted-foreground'
+            )}
+          >
+            {renderStatusIcon()}
+          </div>
+          <div className="min-w-0">
+            <p className="text-[14px] font-semibold text-foreground">v{currentVersion}</p>
+            <p className="text-[12px] text-muted-foreground truncate">{renderStatusText()}</p>
+          </div>
         </div>
-        {renderStatusIcon()}
+        <div className="shrink-0">{renderAction()}</div>
       </div>
 
-      {/* Status */}
-      <div className="flex items-center justify-between py-3 border-t border-b">
-        <p className="text-sm text-muted-foreground">{renderStatusText()}</p>
-        {renderAction()}
-      </div>
-
-      {/* Download Progress */}
       {status === 'downloading' && progress && (
-        <div className="space-y-2">
-          <div className="flex justify-between text-sm">
+        <div className="space-y-2 pt-1">
+          <div className="flex justify-between text-[12px] text-muted-foreground">
             <span>
               {formatBytes(progress.transferred)} / {formatBytes(progress.total)}
             </span>
             <span>{formatBytes(progress.bytesPerSecond)}/s</span>
           </div>
-          <Progress value={progress.percent} className="h-2" />
-          <p className="text-xs text-muted-foreground text-center">
-            {Math.round(progress.percent)}% complete
-          </p>
+          <Progress value={progress.percent} className="h-1.5" />
         </div>
       )}
 
-      {/* Update Info */}
       {updateInfo && (status === 'available' || status === 'downloaded') && (
-        <div className="rounded-lg bg-muted p-4 space-y-2">
+        <div className="space-y-1 pt-1">
           <div className="flex items-center justify-between">
-            <p className="font-medium">Version {updateInfo.version}</p>
+            <p className="text-[13px] font-medium text-foreground">
+              {t('updates.versionLabel', { version: updateInfo.version })}
+            </p>
             {updateInfo.releaseDate && (
-              <p className="text-sm text-muted-foreground">
+              <p className="text-[12px] text-muted-foreground">
                 {new Date(updateInfo.releaseDate).toLocaleDateString()}
               </p>
             )}
           </div>
           {updateInfo.releaseNotes && (
-            <div className="text-sm text-muted-foreground prose prose-sm max-w-none">
-              <p className="font-medium text-foreground mb-1">{t('updates.whatsNew')}</p>
-              <p className="whitespace-pre-wrap">{updateInfo.releaseNotes}</p>
-            </div>
+            <p className="text-[12px] text-muted-foreground whitespace-pre-wrap">
+              {updateInfo.releaseNotes}
+            </p>
           )}
         </div>
       )}
 
-      {/* Error Details */}
       {status === 'error' && error && (
-        <div className="rounded-lg bg-red-50 dark:bg-red-900/10 p-4 text-red-600 dark:text-red-400 text-sm">
-          <p className="font-medium mb-1">{t('updates.errorDetails')}</p>
-          <p>{error}</p>
-        </div>
+        <p className="text-[12px] text-destructive">{normalizeUpdateError(error)}</p>
       )}
-
-      {/* Help Text */}
-      <p className="text-xs text-muted-foreground">
-        {t('updates.help')}
-      </p>
     </div>
   );
 }

@@ -80,6 +80,8 @@ export interface ChatState {
   currentAgentId: string;
   /** First user message text per session key, used as display label */
   sessionLabels: Record<string, string>;
+  /** User-renamed labels per session key, persisted locally and preferred over auto labels */
+  sessionCustomLabels: Record<string, string>;
   /** Last message timestamp (ms) per session key, used for sorting */
   sessionLastActivity: Record<string, number>;
 
@@ -90,7 +92,9 @@ export interface ChatState {
   // Actions
   loadSessions: () => Promise<void>;
   switchSession: (key: string) => void;
+  renameSession: (key: string, label: string) => void;
   newSession: () => void;
+  newSessionForAgent: (agentId: string) => void;
   deleteSession: (key: string) => Promise<void>;
   cleanupEmptySession: () => void;
   loadHistory: (quiet?: boolean) => Promise<void>;

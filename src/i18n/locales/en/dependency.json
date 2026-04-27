@@ -1,0 +1,15 @@
+{
+  "title": "Dependencies Required",
+  "description": "The following dependencies are needed to run the app. Missing items can be installed automatically.",
+  "checking": "Checking dependencies...",
+  "actions": {
+    "recheck": "Recheck",
+    "installMissing": "Install Missing ({{count}})"
+  },
+  "success": {
+    "title": "Environment Ready",
+    "description": "All dependencies are installed. Next, configure your AI model to get started.",
+    "configureModel": "Configure AI Model",
+    "skipToMain": "Skip to main"
+  }
+}

@@ -2,6 +2,7 @@ export interface AgentSummary {
   id: string;
   name: string;
   isDefault: boolean;
+  model?: string;
   modelDisplay: string;
   inheritedModel: boolean;
   workspace: string;

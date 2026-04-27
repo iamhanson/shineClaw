@@ -18,6 +18,12 @@ const PROVIDER_KEY_ALIASES: Record<string, string> = {
 
 export function getOpenClawProviderKeyForType(type: string, providerId: string): string {
   if (MULTI_INSTANCE_PROVIDER_TYPES.has(type)) {
+    // If providerId is a user-defined key from openclaw.json (not a ClawX-
+    // generated UUID id), use it directly to avoid creating duplicate entries.
+    const isClawXGeneratedId = /^(custom|ollama)-[0-9a-f]{8}-/.test(providerId);
+    if (!isClawXGeneratedId) {
+      return providerId;
+    }
     const suffix = providerId.replace(/-/g, '').slice(0, 8);
     return `${type}-${suffix}`;
   }
@@ -48,7 +54,9 @@ export function getOAuthProviderTargetKey(type: string): string | undefined {
   return isMiniMaxProviderType(type) ? OPENCLAW_PROVIDER_KEY_MINIMAX : OPENCLAW_PROVIDER_KEY_QWEN;
 }
 
-export function getOAuthProviderApi(type: string): 'anthropic-messages' | 'openai-completions' | undefined {
+export function getOAuthProviderApi(
+  type: string
+): 'anthropic-messages' | 'openai-completions' | undefined {
   if (!isOAuthProviderType(type)) return undefined;
   return isMiniMaxProviderType(type) ? 'anthropic-messages' : 'openai-completions';
 }
@@ -63,7 +71,12 @@ export function getOAuthProviderDefaultBaseUrl(type: string): string | undefined
 export function normalizeOAuthBaseUrl(type: string, baseUrl?: string): string | undefined {
   if (!baseUrl) return undefined;
   if (isMiniMaxProviderType(type)) {
-    return baseUrl.replace(/\/v1$/, '').replace(/\/anthropic$/, '').replace(/\/$/, '') + '/anthropic';
+    return (
+      baseUrl
+        .replace(/\/v1$/, '')
+        .replace(/\/anthropic$/, '')
+        .replace(/\/$/, '') + '/anthropic'
+    );
   }
   return baseUrl;
 }

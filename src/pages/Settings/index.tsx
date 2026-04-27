@@ -2,7 +2,7 @@
  * Settings Page
  * Application configuration
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useCallback, type ReactNode } from 'react';
 import {
   Sun,
   Moon,
@@ -11,13 +11,21 @@ import {
   ExternalLink,
   Copy,
   FileText,
+  CheckCircle2,
+  XCircle,
+  Loader2,
+  Download,
+  Package,
+  Search,
+  Wrench,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
-import { Separator } from '@/components/ui/separator';
+
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
 import { useSettingsStore } from '@/stores/settings';
 import { useGatewayStore } from '@/stores/gateway';
@@ -39,22 +47,60 @@ import {
 import { useTranslation } from 'react-i18next';
 import { SUPPORTED_LANGUAGES } from '@/i18n';
 import { hostApiFetch } from '@/lib/host-api';
+import { subscribeHostEvent } from '@/lib/host-events';
 import { cn } from '@/lib/utils';
+import type { DependencySnapshot, DepStatus, InstallProgress } from '../../../shared/dependency';
 type ControlUiInfo = {
   url: string;
   token: string;
   port: number;
 };
 
+type SettingsSectionProps = {
+  title: string;
+  eyebrow?: string;
+  description?: string;
+  children: ReactNode;
+};
+
+function SettingsSection({ title, eyebrow, description, children }: SettingsSectionProps) {
+  return (
+    <section className="space-y-2">
+      <div className="space-y-1">
+        {eyebrow ? (
+          <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-foreground/45">
+            {eyebrow}
+          </p>
+        ) : null}
+        <div className="space-y-1">
+          <h2 className="text-[17px] font-heading font-medium tracking-tight text-foreground">
+            {title}
+          </h2>
+          {description ? (
+            <p className="max-w-2xl text-[13px] leading-6 text-muted-foreground">{description}</p>
+          ) : null}
+        </div>
+      </div>
+      {children}
+    </section>
+  );
+}
+
 export function Settings() {
   const { t } = useTranslation('settings');
   const {
     theme,
     setTheme,
+    fontSize,
+    setFontSize,
     language,
     setLanguage,
+    personaPrompt,
+    setPersonaPrompt,
     launchAtStartup,
     setLaunchAtStartup,
+    floatingBallEnabled,
+    setFloatingBallEnabled,
     gatewayAutoStart,
     setGatewayAutoStart,
     proxyEnabled,
@@ -95,11 +141,19 @@ export function Settings() {
   const [wsDiagnosticEnabled, setWsDiagnosticEnabled] = useState(false);
   const [showTelemetryViewer, setShowTelemetryViewer] = useState(false);
   const [telemetryEntries, setTelemetryEntries] = useState<UiTelemetryEntry[]>([]);
+  const [personaPromptDraft, setPersonaPromptDraft] = useState('');
 
   const isWindows = window.electron.platform === 'win32';
   const showCliTools = true;
   const [showLogs, setShowLogs] = useState(false);
   const [logContent, setLogContent] = useState('');
+  const [restartingGateway, setRestartingGateway] = useState(false);
+  const [savingPersona, setSavingPersona] = useState(false);
+  const [runtimeSnapshot, setRuntimeSnapshot] = useState<DependencySnapshot | null>(null);
+  const [runtimeChecking, setRuntimeChecking] = useState(false);
+  const [runtimeError, setRuntimeError] = useState<string | null>(null);
+  const [runtimeProgress, setRuntimeProgress] = useState<Record<string, InstallProgress>>({});
+  const [runtimeInstalling, setRuntimeInstalling] = useState(false);
   const [doctorRunningMode, setDoctorRunningMode] = useState<'diagnose' | 'fix' | null>(null);
   const [doctorResult, setDoctorResult] = useState<{
     mode: 'diagnose' | 'fix';
@@ -114,6 +168,21 @@ export function Settings() {
     error?: string;
   } | null>(null);
 
+  const sectionCardClass =
+    'rounded-xl border border-black/8 bg-white/80 p-4 shadow-[0_18px_50px_-30px_rgba(15,23,42,0.35)] backdrop-blur-sm dark:border-white/10 dark:bg-white/[0.03] md:p-5';
+  const rowClass = 'flex items-center justify-between gap-4 px-1 py-2';
+  const labelClass = 'text-[13px] font-semibold text-foreground/90';
+  const helperClass = 'mt-1 text-[12px] leading-5 text-muted-foreground';
+  const chipButtonClass =
+    'h-8 rounded-full border-black/10 px-3 text-[12px] shadow-none transition-all dark:border-white/10';
+
+  const gatewayStateTone =
+    gatewayStatus.state === 'running'
+      ? 'bg-emerald-500/12 text-emerald-700 dark:text-emerald-400 border-emerald-500/20'
+      : gatewayStatus.state === 'error'
+        ? 'bg-red-500/12 text-red-700 dark:text-red-400 border-red-500/20'
+        : 'bg-black/5 text-muted-foreground dark:bg-white/5 border-black/5 dark:border-white/10';
+
   const handleShowLogs = async () => {
     try {
       const logs = await hostApiFetch<{ content: string }>('/api/logs?tailLines=100');
@@ -122,6 +191,19 @@ export function Settings() {
     } catch {
       setLogContent('(Failed to load logs)');
       setShowLogs(true);
+    }
+  };
+
+  const handleRestartGateway = async () => {
+    setRestartingGateway(true);
+    toast.info('正在重启网关...');
+    try {
+      await restartGateway();
+      toast.success('已发送重启请求');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error));
+    } finally {
+      setRestartingGateway(false);
     }
   };
 
@@ -156,12 +238,19 @@ export function Settings() {
       });
       setDoctorResult(result);
       if (result.success) {
-        toast.success(mode === 'fix' ? t('developer.doctorFixSucceeded') : t('developer.doctorSucceeded'));
+        toast.success(
+          mode === 'fix' ? t('developer.doctorFixSucceeded') : t('developer.doctorSucceeded')
+        );
       } else {
-        toast.error(result.error || (mode === 'fix' ? t('developer.doctorFixFailed') : t('developer.doctorFailed')));
+        toast.error(
+          result.error ||
+            (mode === 'fix' ? t('developer.doctorFixFailed') : t('developer.doctorFailed'))
+        );
       }
     } catch (error) {
-      const message = toUserMessage(error) || (mode === 'fix' ? t('developer.doctorFixRunFailed') : t('developer.doctorRunFailed'));
+      const message =
+        toUserMessage(error) ||
+        (mode === 'fix' ? t('developer.doctorFixRunFailed') : t('developer.doctorRunFailed'));
       toast.error(message);
       setDoctorResult({
         mode,
@@ -201,8 +290,6 @@ export function Settings() {
       toast.error(`Failed to copy doctor output: ${String(error)}`);
     }
   };
-
-
 
   const refreshControlUiInfo = async () => {
     try {
@@ -256,7 +343,9 @@ export function Settings() {
       }
     })();
 
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [devModeUnlocked, showCliTools]);
 
   const handleCopyCliCommand = async () => {
@@ -269,15 +358,50 @@ export function Settings() {
     }
   };
 
+  const loadRuntimeSnapshot = useCallback(async () => {
+    setRuntimeChecking(true);
+    setRuntimeError(null);
+    try {
+      const snapshot = await hostApiFetch<DependencySnapshot>('/api/system/dependencies');
+      setRuntimeSnapshot(snapshot);
+    } catch (error) {
+      setRuntimeError(String(error));
+    } finally {
+      setRuntimeChecking(false);
+    }
+  }, []);
+
+  const handleInstallMissing = useCallback(async () => {
+    if (!runtimeSnapshot) return;
+    const missing = runtimeSnapshot.deps.filter((d: DepStatus) => d.required && !d.installed);
+    if (missing.length === 0) return;
+
+    setRuntimeInstalling(true);
+    setRuntimeProgress({});
+    try {
+      await hostApiFetch('/api/system/dependencies/install', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kinds: missing.map((d: DepStatus) => d.kind) }),
+      });
+      toast.info(t('runtime.installStarted', { defaultValue: '已开始安装缺失依赖' }));
+    } catch (error) {
+      setRuntimeInstalling(false);
+      toast.error(String(error));
+    }
+  }, [runtimeSnapshot, t]);
+
   useEffect(() => {
     const unsubscribe = window.electron.ipcRenderer.on(
       'openclaw:cli-installed',
       (...args: unknown[]) => {
         const installedPath = typeof args[0] === 'string' ? args[0] : '';
         toast.success(`openclaw CLI installed at ${installedPath}`);
-      },
+      }
     );
-    return () => { unsubscribe?.(); };
+    return () => {
+      unsubscribe?.();
+    };
   }, []);
 
   useEffect(() => {
@@ -323,6 +447,33 @@ export function Settings() {
     setProxyBypassRulesDraft(proxyBypassRules);
   }, [proxyBypassRules]);
 
+  useEffect(() => {
+    setPersonaPromptDraft(personaPrompt);
+  }, [personaPrompt]);
+
+  useEffect(() => {
+    void loadRuntimeSnapshot();
+  }, [loadRuntimeSnapshot]);
+
+  // Subscribe to dep:progress events for real-time install feedback in Settings
+  useEffect(() => {
+    const offProgress = subscribeHostEvent<InstallProgress>('dep:progress', (p) => {
+      setRuntimeProgress((prev) => ({ ...prev, [p.kind]: p }));
+      if (p.phase === 'done' || p.phase === 'error') {
+        void loadRuntimeSnapshot();
+      }
+    });
+    const offSnapshot = subscribeHostEvent<DependencySnapshot>('dep:snapshot', (snap) => {
+      setRuntimeSnapshot(snap);
+      setRuntimeInstalling(false);
+      setRuntimeProgress({});
+    });
+    return () => {
+      offProgress();
+      offSnapshot();
+    };
+  }, [loadRuntimeSnapshot]);
+
   const handleSaveProxySettings = async () => {
     setSavingProxy(true);
     try {
@@ -356,6 +507,17 @@ export function Settings() {
     }
   };
 
+  const handleSavePersonaPrompt = async () => {
+    setSavingPersona(true);
+    try {
+      const normalized = personaPromptDraft.trim();
+      setPersonaPrompt(normalized);
+      toast.success(t('persona.saved'));
+    } finally {
+      setSavingPersona(false);
+    }
+  };
+
   const telemetryStats = useMemo(() => {
     let errorCount = 0;
     let slowCount = 0;
@@ -363,9 +525,8 @@ export function Settings() {
       if (entry.event.endsWith('_error') || entry.event.includes('request_error')) {
         errorCount += 1;
       }
-      const durationMs = typeof entry.payload.durationMs === 'number'
-        ? entry.payload.durationMs
-        : Number.NaN;
+      const durationMs =
+        typeof entry.payload.durationMs === 'number' ? entry.payload.durationMs : Number.NaN;
       if (Number.isFinite(durationMs) && durationMs >= 800) {
         slowCount += 1;
       }
@@ -374,15 +535,18 @@ export function Settings() {
   }, [telemetryEntries]);
 
   const telemetryByEvent = useMemo(() => {
-    const map = new Map<string, {
-      event: string;
-      count: number;
-      errorCount: number;
-      slowCount: number;
-      totalDuration: number;
-      timedCount: number;
-      lastTs: string;
-    }>();
+    const map = new Map<
+      string,
+      {
+        event: string;
+        count: number;
+        errorCount: number;
+        slowCount: number;
+        totalDuration: number;
+        timedCount: number;
+        lastTs: string;
+      }
+    >();
 
     for (const entry of telemetryEntries) {
       const current = map.get(entry.event) ?? {
@@ -402,9 +566,8 @@ export function Settings() {
         current.errorCount += 1;
       }
 
-      const durationMs = typeof entry.payload.durationMs === 'number'
-        ? entry.payload.durationMs
-        : Number.NaN;
+      const durationMs =
+        typeof entry.payload.durationMs === 'number' ? entry.payload.durationMs : Number.NaN;
       if (Number.isFinite(durationMs)) {
         current.totalDuration += durationMs;
         current.timedCount += 1;
@@ -416,9 +579,7 @@ export function Settings() {
       map.set(entry.event, current);
     }
 
-    return [...map.values()]
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 12);
+    return [...map.values()].sort((a, b) => b.count - a.count).slice(0, 12);
   }, [telemetryEntries]);
 
   const handleCopyTelemetry = async () => {
@@ -441,43 +602,39 @@ export function Settings() {
     setGatewayWsDiagnosticEnabled(enabled);
     setWsDiagnosticEnabled(enabled);
     toast.success(
-      enabled
-        ? t('developer.wsDiagnosticEnabled')
-        : t('developer.wsDiagnosticDisabled'),
+      enabled ? t('developer.wsDiagnosticEnabled') : t('developer.wsDiagnosticDisabled')
     );
   };
 
   return (
-    <div className="flex flex-col -m-6 dark:bg-background h-[calc(100vh-2.5rem)] overflow-hidden">
-      <div className="w-full max-w-5xl mx-auto flex flex-col h-full p-10 pt-16">
-
+    <div className="min-h-[calc(100vh-2.5rem)] overflow-y-auto bg-[radial-gradient(circle_at_top,_rgba(16,185,129,0.10),_transparent_28%),linear-gradient(180deg,rgba(255,255,255,0.72),rgba(255,255,255,0))] -m-6 dark:bg-[radial-gradient(circle_at_top,_rgba(16,185,129,0.12),_transparent_24%),linear-gradient(180deg,rgba(255,255,255,0.02),rgba(255,255,255,0))]">
+      <div className="mx-auto flex w-full max-w-[920px] flex-col p-5 pb-10 pt-7 md:p-6 md:pb-12 md:pt-8">
         {/* Header */}
-        <div className="flex flex-col md:flex-row md:items-start justify-between mb-12 shrink-0 gap-4">
-          <div>
-            <h1 className="text-5xl md:text-6xl font-serif text-foreground mb-3 font-normal tracking-tight" style={{ fontFamily: 'Georgia, Cambria, "Times New Roman", Times, serif' }}>
+        <div className="mb-6">
+          <div className="max-w-2xl">
+            <h1 className="mb-2 text-[26px] font-heading font-normal tracking-tight text-foreground md:text-[32px]">
               {t('title')}
             </h1>
-            <p className="text-[17px] text-foreground/70 font-medium">
-              {t('subtitle')}
-            </p>
+            <p className="text-[13px] leading-6 text-foreground/62">{t('subtitle')}</p>
           </div>
         </div>
 
         {/* Content Area */}
-        <div className="flex-1 overflow-y-auto pr-2 pb-10 min-h-0 -mr-2 space-y-12">
-
+        <div className="space-y-5 pr-1">
           {/* Appearance */}
-          <div>
-            <h2 className="text-3xl font-serif text-foreground mb-6 font-normal tracking-tight" style={{ fontFamily: 'Georgia, Cambria, "Times New Roman", Times, serif' }}>
-              {t('appearance.title')}
-            </h2>
-            <div className="space-y-6">
+          <SettingsSection title={t('appearance.title')}>
+            <div className={cn(sectionCardClass, 'space-y-3')}>
               <div className="space-y-3">
-                <Label className="text-[15px] font-medium text-foreground/80">{t('appearance.theme')}</Label>
+                <Label className={labelClass}>{t('appearance.theme')}</Label>
                 <div className="flex flex-wrap gap-2">
                   <Button
                     variant={theme === 'light' ? 'secondary' : 'outline'}
-                    className={cn("rounded-full px-5 h-10 border-black/10 dark:border-white/10", theme === 'light' ? "bg-black/5 dark:bg-white/10 text-foreground" : "bg-transparent text-muted-foreground hover:bg-black/5 dark:hover:bg-white/5")}
+                    className={cn(
+                      chipButtonClass,
+                      theme === 'light'
+                        ? 'border-black/10 bg-black/10 text-foreground dark:border-white/10 dark:bg-white/10'
+                        : 'bg-transparent text-muted-foreground hover:bg-black/5 dark:hover:bg-white/5'
+                    )}
                     onClick={() => setTheme('light')}
                   >
                     <Sun className="h-4 w-4 mr-2" />
@@ -485,7 +642,12 @@ export function Settings() {
                   </Button>
                   <Button
                     variant={theme === 'dark' ? 'secondary' : 'outline'}
-                    className={cn("rounded-full px-5 h-10 border-black/10 dark:border-white/10", theme === 'dark' ? "bg-black/5 dark:bg-white/10 text-foreground" : "bg-transparent text-muted-foreground hover:bg-black/5 dark:hover:bg-white/5")}
+                    className={cn(
+                      chipButtonClass,
+                      theme === 'dark'
+                        ? 'border-black/10 bg-black/10 text-foreground dark:border-white/10 dark:bg-white/10'
+                        : 'bg-transparent text-muted-foreground hover:bg-black/5 dark:hover:bg-white/5'
+                    )}
                     onClick={() => setTheme('dark')}
                   >
                     <Moon className="h-4 w-4 mr-2" />
@@ -493,7 +655,12 @@ export function Settings() {
                   </Button>
                   <Button
                     variant={theme === 'system' ? 'secondary' : 'outline'}
-                    className={cn("rounded-full px-5 h-10 border-black/10 dark:border-white/10", theme === 'system' ? "bg-black/5 dark:bg-white/10 text-foreground" : "bg-transparent text-muted-foreground hover:bg-black/5 dark:hover:bg-white/5")}
+                    className={cn(
+                      chipButtonClass,
+                      theme === 'system'
+                        ? 'border-black/10 bg-black/10 text-foreground dark:border-white/10 dark:bg-white/10'
+                        : 'bg-transparent text-muted-foreground hover:bg-black/5 dark:hover:bg-white/5'
+                    )}
                     onClick={() => setTheme('system')}
                   >
                     <Monitor className="h-4 w-4 mr-2" />
@@ -502,13 +669,18 @@ export function Settings() {
                 </div>
               </div>
               <div className="space-y-3">
-                <Label className="text-[15px] font-medium text-foreground/80">{t('appearance.language')}</Label>
+                <Label className={labelClass}>{t('appearance.language')}</Label>
                 <div className="flex flex-wrap gap-2">
                   {SUPPORTED_LANGUAGES.map((lang) => (
                     <Button
                       key={lang.code}
                       variant={language === lang.code ? 'secondary' : 'outline'}
-                      className={cn("rounded-full px-5 h-10 border-black/10 dark:border-white/10", language === lang.code ? "bg-black/5 dark:bg-white/10 text-foreground" : "bg-transparent text-muted-foreground hover:bg-black/5 dark:hover:bg-white/5")}
+                      className={cn(
+                        chipButtonClass,
+                        language === lang.code
+                          ? 'border-black/10 bg-black/10 text-foreground dark:border-white/10 dark:bg-white/10'
+                          : 'bg-transparent text-muted-foreground hover:bg-black/5 dark:hover:bg-white/5'
+                      )}
                       onClick={() => setLanguage(lang.code)}
                     >
                       {lang.label}
@@ -516,54 +688,129 @@ export function Settings() {
                   ))}
                 </div>
               </div>
-              <div className="flex items-center justify-between">
-                <div>
-                  <Label className="text-[15px] font-medium text-foreground/80">{t('appearance.launchAtStartup')}</Label>
-                  <p className="text-[13px] text-muted-foreground mt-1">
-                    {t('appearance.launchAtStartupDesc')}
-                  </p>
+              <div className="space-y-3">
+                <Label className={labelClass}>{t('appearance.fontSize')}</Label>
+                <div className="flex flex-wrap gap-2">
+                  {(['small', 'standard', 'large'] as const).map((size) => (
+                    <Button
+                      key={size}
+                      variant={fontSize === size ? 'secondary' : 'outline'}
+                      className={cn(
+                        chipButtonClass,
+                        fontSize === size
+                          ? 'border-black/10 bg-black/10 text-foreground dark:border-white/10 dark:bg-white/10'
+                          : 'bg-transparent text-muted-foreground hover:bg-black/5 dark:hover:bg-white/5'
+                      )}
+                      onClick={() => setFontSize(size)}
+                    >
+                      {t(`appearance.font${size.charAt(0).toUpperCase() + size.slice(1)}`)}
+                    </Button>
+                  ))}
                 </div>
-                <Switch
-                  checked={launchAtStartup}
-                  onCheckedChange={setLaunchAtStartup}
-                />
+              </div>
+              <div className={rowClass}>
+                <div>
+                  <Label className={labelClass}>{t('appearance.launchAtStartup')}</Label>
+                  <p className={helperClass}>{t('appearance.launchAtStartupDesc')}</p>
+                </div>
+                <Switch checked={launchAtStartup} onCheckedChange={setLaunchAtStartup} />
+              </div>
+              <div className={rowClass}>
+                <div>
+                  <Label className={labelClass}>悬浮球</Label>
+                  <p className={helperClass}>在桌面显示可拖拽悬浮球，点击可快速唤起主窗口。</p>
+                </div>
+                <Switch checked={floatingBallEnabled} onCheckedChange={setFloatingBallEnabled} />
               </div>
             </div>
-          </div>
+          </SettingsSection>
 
-          <Separator className="bg-black/5 dark:bg-white/5" />
+          <SettingsSection title={t('persona.title')}>
+            <div className={cn(sectionCardClass, 'space-y-3')}>
+              <div className="space-y-2">
+                <Label className={labelClass}>{t('persona.label')}</Label>
+                <p className={helperClass}>{t('persona.help')}</p>
+                <Textarea
+                  value={personaPromptDraft}
+                  onChange={(event) => setPersonaPromptDraft(event.target.value)}
+                  placeholder={t('persona.placeholder')}
+                  className="min-h-[120px] resize-y rounded-xl border-black/10 bg-black/5 text-[13px] leading-6 dark:border-white/10 dark:bg-white/5"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setPersonaPromptDraft('')}
+                  className="rounded-xl h-9 px-4 bg-transparent border-black/10 dark:border-white/10 hover:bg-black/5 dark:hover:bg-white/5"
+                >
+                  {t('persona.reset')}
+                </Button>
+                <Button
+                  type="button"
+                  onClick={handleSavePersonaPrompt}
+                  disabled={savingPersona || personaPromptDraft.trim() === personaPrompt.trim()}
+                  className="rounded-xl h-9 px-4"
+                >
+                  {savingPersona ? t('common:status.saving') : t('persona.save')}
+                </Button>
+              </div>
+            </div>
+          </SettingsSection>
 
           {/* Gateway */}
-          <div>
-            <h2 className="text-3xl font-serif text-foreground mb-6 font-normal tracking-tight" style={{ fontFamily: 'Georgia, Cambria, "Times New Roman", Times, serif' }}>
-              {t('gateway.title')}
-            </h2>
-            <div className="space-y-6">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <SettingsSection title={t('gateway.title')}>
+            <div className={cn(sectionCardClass, 'space-y-3')}>
+              <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
                 <div>
-                  <Label className="text-[15px] font-medium text-foreground">{t('gateway.status')}</Label>
-                  <p className="text-[13px] text-muted-foreground mt-1">
+                  <Label className={labelClass}>{t('gateway.status')}</Label>
+                  <p className={helperClass}>
                     {t('gateway.port')}: {gatewayStatus.port}
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
-                  <div className={cn(
-                    "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[13px] font-medium border",
-                    gatewayStatus.state === 'running' ? "bg-green-500/10 text-green-600 dark:text-green-500 border-green-500/20" :
-                      gatewayStatus.state === 'error' ? "bg-red-500/10 text-red-600 dark:text-red-500 border-red-500/20" :
-                        "bg-black/5 dark:bg-white/5 text-muted-foreground border-transparent"
-                  )}>
-                    <div className={cn("w-1.5 h-1.5 rounded-full",
-                      gatewayStatus.state === 'running' ? "bg-green-500" :
-                        gatewayStatus.state === 'error' ? "bg-red-500" : "bg-muted-foreground"
-                    )} />
+                  <div
+                    className={cn(
+                      'flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[12px] font-medium capitalize',
+                      gatewayStateTone
+                    )}
+                  >
+                    <div
+                      className={cn(
+                        'w-1.5 h-1.5 rounded-full',
+                        gatewayStatus.state === 'running'
+                          ? 'bg-green-500'
+                          : gatewayStatus.state === 'error'
+                            ? 'bg-red-500'
+                            : 'bg-muted-foreground'
+                      )}
+                    />
                     {gatewayStatus.state}
                   </div>
-                  <Button variant="outline" size="sm" onClick={restartGateway} className="rounded-full h-8 px-4 border-black/10 dark:border-white/10 bg-transparent hover:bg-black/5 dark:hover:bg-white/5">
-                    <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
-                    {t('common:actions.restart')}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void handleRestartGateway()}
+                    disabled={restartingGateway}
+                    className={cn(
+                      chipButtonClass,
+                      'bg-transparent hover:bg-black/5 dark:hover:bg-white/5'
+                    )}
+                  >
+                    <RefreshCw
+                      className={cn('h-3.5 w-3.5 mr-1.5', restartingGateway && 'animate-spin')}
+                    />
+                    {restartingGateway ? '重启中...' : t('common:actions.restart')}
                   </Button>
-                  <Button variant="outline" size="sm" onClick={handleShowLogs} className="rounded-full h-8 px-4 border-black/10 dark:border-white/10 bg-transparent hover:bg-black/5 dark:hover:bg-white/5">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleShowLogs}
+                    className={cn(
+                      chipButtonClass,
+                      'bg-transparent hover:bg-black/5 dark:hover:bg-white/5'
+                    )}
+                  >
                     <FileText className="h-3.5 w-3.5 mr-1.5" />
                     {t('gateway.logs')}
                   </Button>
@@ -571,15 +818,25 @@ export function Settings() {
               </div>
 
               {showLogs && (
-                <div className="p-4 rounded-2xl bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/5">
+                <div className="rounded-lg bg-black/[0.03] p-3 dark:bg-white/[0.03]">
                   <div className="flex items-center justify-between mb-3">
                     <p className="font-medium text-[14px]">{t('gateway.appLogs')}</p>
                     <div className="flex gap-2">
-                      <Button variant="ghost" size="sm" className="h-7 text-[12px] rounded-full hover:bg-black/5 dark:hover:bg-white/10" onClick={handleOpenLogDir}>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 text-[12px] rounded-full hover:bg-black/5 dark:hover:bg-white/10"
+                        onClick={handleOpenLogDir}
+                      >
                         <ExternalLink className="h-3 w-3 mr-1.5" />
                         {t('gateway.openFolder')}
                       </Button>
-                      <Button variant="ghost" size="sm" className="h-7 text-[12px] rounded-full hover:bg-black/5 dark:hover:bg-white/10" onClick={() => setShowLogs(false)}>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 text-[12px] rounded-full hover:bg-black/5 dark:hover:bg-white/10"
+                        onClick={() => setShowLogs(false)}
+                      >
                         {t('common:actions.close')}
                       </Button>
                     </div>
@@ -590,79 +847,61 @@ export function Settings() {
                 </div>
               )}
 
-              <div className="flex items-center justify-between">
+              <div className={rowClass}>
                 <div>
-                  <Label className="text-[15px] font-medium text-foreground">{t('gateway.autoStart')}</Label>
-                  <p className="text-[13px] text-muted-foreground mt-1">
-                    {t('gateway.autoStartDesc')}
-                  </p>
+                  <Label className={labelClass}>{t('gateway.autoStart')}</Label>
+                  <p className={helperClass}>{t('gateway.autoStartDesc')}</p>
                 </div>
-                <Switch
-                  checked={gatewayAutoStart}
-                  onCheckedChange={setGatewayAutoStart}
-                />
+                <Switch checked={gatewayAutoStart} onCheckedChange={setGatewayAutoStart} />
               </div>
 
-
-              <div className="flex items-center justify-between">
+              <div className={rowClass}>
                 <div>
-                  <Label className="text-[15px] font-medium text-foreground">{t('advanced.devMode')}</Label>
-                  <p className="text-[13px] text-muted-foreground mt-1">
-                    {t('advanced.devModeDesc')}
-                  </p>
+                  <Label className={labelClass}>{t('advanced.devMode')}</Label>
+                  <p className={helperClass}>{t('advanced.devModeDesc')}</p>
                 </div>
-                <Switch
-                  checked={devModeUnlocked}
-                  onCheckedChange={setDevModeUnlocked}
-                />
+                <Switch checked={devModeUnlocked} onCheckedChange={setDevModeUnlocked} />
               </div>
 
-              <div className="flex items-center justify-between">
+              <div className={rowClass}>
                 <div>
-                  <Label className="text-[15px] font-medium text-foreground">{t('advanced.telemetry')}</Label>
-                  <p className="text-[13px] text-muted-foreground mt-1">
-                    {t('advanced.telemetryDesc')}
-                  </p>
+                  <Label className={labelClass}>{t('advanced.telemetry')}</Label>
+                  <p className={helperClass}>{t('advanced.telemetryDesc')}</p>
                 </div>
-                <Switch
-                  checked={telemetryEnabled}
-                  onCheckedChange={setTelemetryEnabled}
-                />
+                <Switch checked={telemetryEnabled} onCheckedChange={setTelemetryEnabled} />
               </div>
-
             </div>
-          </div>
-
+          </SettingsSection>
 
           {/* Developer */}
           {devModeUnlocked && (
             <>
-              <Separator className="bg-black/5 dark:bg-white/5" />
-              <div>
-                <h2 className="text-3xl font-serif text-foreground mb-6 font-normal tracking-tight" style={{ fontFamily: 'Georgia, Cambria, "Times New Roman", Times, serif' }}>
-                  {t('developer.title')}
-                </h2>
-                <div className="space-y-8">
+              <SettingsSection title={t('developer.title')}>
+                <div className={cn(sectionCardClass, 'space-y-4')}>
                   {/* Gateway Proxy */}
                   <div className="space-y-4">
                     <div className="flex items-center justify-between">
                       <div>
-                        <Label className="text-[14px] font-medium text-foreground/80">Gateway Proxy</Label>
+                        <Label className="text-[14px] font-medium text-foreground/80">
+                          Gateway Proxy
+                        </Label>
                         <p className="text-[13px] text-muted-foreground">
                           {t('gateway.proxyDesc')}
                         </p>
                       </div>
-                      <Switch
-                        checked={proxyEnabledDraft}
-                        onCheckedChange={setProxyEnabledDraft}
-                      />
+                      <Switch checked={proxyEnabledDraft} onCheckedChange={setProxyEnabledDraft} />
                     </div>
 
                     {proxyEnabledDraft && (
                       <div className="space-y-4 pt-2">
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                           <div className="space-y-2">
-                            <Label htmlFor="proxy-server" className="text-[13px] text-foreground/80">{t('gateway.proxyServer')}</Label>
+                            <Label
+                              htmlFor="proxy-server"
+                              className="text-[13px] text-foreground/80"
+                            >
+                              {t('gateway.proxyServer')}
+                            </Label>
                             <Input
                               id="proxy-server"
                               value={proxyServerDraft}
@@ -676,7 +915,12 @@ export function Settings() {
                           </div>
 
                           <div className="space-y-2">
-                            <Label htmlFor="proxy-http-server" className="text-[13px] text-foreground/80">{t('gateway.proxyHttpServer')}</Label>
+                            <Label
+                              htmlFor="proxy-http-server"
+                              className="text-[13px] text-foreground/80"
+                            >
+                              {t('gateway.proxyHttpServer')}
+                            </Label>
                             <Input
                               id="proxy-http-server"
                               value={proxyHttpServerDraft}
@@ -690,7 +934,12 @@ export function Settings() {
                           </div>
 
                           <div className="space-y-2">
-                            <Label htmlFor="proxy-https-server" className="text-[13px] text-foreground/80">{t('gateway.proxyHttpsServer')}</Label>
+                            <Label
+                              htmlFor="proxy-https-server"
+                              className="text-[13px] text-foreground/80"
+                            >
+                              {t('gateway.proxyHttpsServer')}
+                            </Label>
                             <Input
                               id="proxy-https-server"
                               value={proxyHttpsServerDraft}
@@ -704,7 +953,12 @@ export function Settings() {
                           </div>
 
                           <div className="space-y-2">
-                            <Label htmlFor="proxy-all-server" className="text-[13px] text-foreground/80">{t('gateway.proxyAllServer')}</Label>
+                            <Label
+                              htmlFor="proxy-all-server"
+                              className="text-[13px] text-foreground/80"
+                            >
+                              {t('gateway.proxyAllServer')}
+                            </Label>
                             <Input
                               id="proxy-all-server"
                               value={proxyAllServerDraft}
@@ -719,7 +973,9 @@ export function Settings() {
                         </div>
 
                         <div className="space-y-2">
-                          <Label htmlFor="proxy-bypass" className="text-[13px] text-foreground/80">{t('gateway.proxyBypass')}</Label>
+                          <Label htmlFor="proxy-bypass" className="text-[13px] text-foreground/80">
+                            {t('gateway.proxyBypass')}
+                          </Label>
                           <Input
                             id="proxy-bypass"
                             value={proxyBypassRulesDraft}
@@ -739,7 +995,9 @@ export function Settings() {
                             disabled={savingProxy}
                             className="rounded-xl h-10 px-5 bg-transparent border-black/10 dark:border-white/10 hover:bg-black/5 dark:hover:bg-white/5"
                           >
-                            <RefreshCw className={`h-4 w-4 mr-2${savingProxy ? ' animate-spin' : ''}`} />
+                            <RefreshCw
+                              className={`h-4 w-4 mr-2${savingProxy ? ' animate-spin' : ''}`}
+                            />
                             {savingProxy ? t('common:status.saving') : t('common:actions.save')}
                           </Button>
                           <p className="text-[12px] text-muted-foreground">
@@ -750,7 +1008,9 @@ export function Settings() {
                     )}
                   </div>
                   <div className="space-y-4 pt-4">
-                    <Label className="text-[14px] font-medium text-foreground/80">{t('developer.gatewayToken')}</Label>
+                    <Label className="text-[14px] font-medium text-foreground/80">
+                      {t('developer.gatewayToken')}
+                    </Label>
                     <p className="text-[13px] text-muted-foreground">
                       {t('developer.gatewayTokenDesc')}
                     </p>
@@ -786,10 +1046,10 @@ export function Settings() {
 
                   {showCliTools && (
                     <div className="space-y-3">
-                      <Label className="text-[15px] font-medium text-foreground">{t('developer.cli')}</Label>
-                      <p className="text-[13px] text-muted-foreground">
-                        {t('developer.cliDesc')}
-                      </p>
+                      <Label className="text-[15px] font-medium text-foreground">
+                        {t('developer.cli')}
+                      </Label>
+                      <p className="text-[13px] text-muted-foreground">{t('developer.cliDesc')}</p>
                       {isWindows && (
                         <p className="text-[12px] text-muted-foreground">
                           {t('developer.cliPowershell')}
@@ -819,7 +1079,9 @@ export function Settings() {
                   <div className="space-y-4">
                     <div className="flex items-center justify-between gap-3">
                       <div>
-                        <Label className="text-[14px] font-medium text-foreground">{t('developer.doctor')}</Label>
+                        <Label className="text-[14px] font-medium text-foreground">
+                          {t('developer.doctor')}
+                        </Label>
                         <p className="text-[13px] text-muted-foreground mt-1">
                           {t('developer.doctorDesc')}
                         </p>
@@ -832,8 +1094,12 @@ export function Settings() {
                           disabled={doctorRunningMode !== null}
                           className="rounded-xl h-10 px-4 bg-transparent border-black/10 dark:border-white/10 hover:bg-black/5 dark:hover:bg-white/5"
                         >
-                          <RefreshCw className={`h-4 w-4 mr-2${doctorRunningMode === 'diagnose' ? ' animate-spin' : ''}`} />
-                          {doctorRunningMode === 'diagnose' ? t('common:status.running') : t('developer.runDoctor')}
+                          <RefreshCw
+                            className={`h-4 w-4 mr-2${doctorRunningMode === 'diagnose' ? ' animate-spin' : ''}`}
+                          />
+                          {doctorRunningMode === 'diagnose'
+                            ? t('common:status.running')
+                            : t('developer.runDoctor')}
                         </Button>
                         <Button
                           type="button"
@@ -842,8 +1108,12 @@ export function Settings() {
                           disabled={doctorRunningMode !== null}
                           className="rounded-xl h-10 px-4 bg-transparent border-black/10 dark:border-white/10 hover:bg-black/5 dark:hover:bg-white/5"
                         >
-                          <RefreshCw className={`h-4 w-4 mr-2${doctorRunningMode === 'fix' ? ' animate-spin' : ''}`} />
-                          {doctorRunningMode === 'fix' ? t('common:status.running') : t('developer.runDoctorFix')}
+                          <RefreshCw
+                            className={`h-4 w-4 mr-2${doctorRunningMode === 'fix' ? ' animate-spin' : ''}`}
+                          />
+                          {doctorRunningMode === 'fix'
+                            ? t('common:status.running')
+                            : t('developer.runDoctorFix')}
                         </Button>
                         <Button
                           type="button"
@@ -859,12 +1129,19 @@ export function Settings() {
                     </div>
 
                     {doctorResult && (
-                      <div className="space-y-3 rounded-2xl border border-black/10 dark:border-white/10 p-5 bg-black/5 dark:bg-white/5">
+                      <div className="space-y-3 rounded-lg bg-black/[0.03] dark:bg-white/[0.03] p-4">
                         <div className="flex flex-wrap gap-2 text-[12px]">
-                          <Badge variant={doctorResult.success ? 'secondary' : 'destructive'} className="rounded-full px-3 py-1">
+                          <Badge
+                            variant={doctorResult.success ? 'secondary' : 'destructive'}
+                            className="rounded-full px-3 py-1"
+                          >
                             {doctorResult.mode === 'fix'
-                              ? (doctorResult.success ? t('developer.doctorFixOk') : t('developer.doctorFixIssue'))
-                              : (doctorResult.success ? t('developer.doctorOk') : t('developer.doctorIssue'))}
+                              ? doctorResult.success
+                                ? t('developer.doctorFixOk')
+                                : t('developer.doctorFixIssue')
+                              : doctorResult.success
+                                ? t('developer.doctorOk')
+                                : t('developer.doctorIssue')}
                           </Badge>
                           <Badge variant="outline" className="rounded-full px-3 py-1">
                             {t('developer.doctorExitCode')}: {doctorResult.exitCode ?? 'null'}
@@ -874,19 +1151,31 @@ export function Settings() {
                           </Badge>
                         </div>
                         <div className="space-y-1 text-[12px] text-muted-foreground font-mono break-all">
-                          <p>{t('developer.doctorCommand')}: {doctorResult.command}</p>
-                          <p>{t('developer.doctorWorkingDir')}: {doctorResult.cwd || '-'}</p>
-                          {doctorResult.error && <p>{t('developer.doctorError')}: {doctorResult.error}</p>}
+                          <p>
+                            {t('developer.doctorCommand')}: {doctorResult.command}
+                          </p>
+                          <p>
+                            {t('developer.doctorWorkingDir')}: {doctorResult.cwd || '-'}
+                          </p>
+                          {doctorResult.error && (
+                            <p>
+                              {t('developer.doctorError')}: {doctorResult.error}
+                            </p>
+                          )}
                         </div>
                         <div className="grid gap-3 md:grid-cols-2">
                           <div className="space-y-2">
-                            <p className="text-[12px] font-semibold text-foreground/80">{t('developer.doctorStdout')}</p>
+                            <p className="text-[12px] font-semibold text-foreground/80">
+                              {t('developer.doctorStdout')}
+                            </p>
                             <pre className="max-h-72 overflow-auto rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-card p-3 text-[11px] font-mono whitespace-pre-wrap break-words">
                               {doctorResult.stdout.trim() || t('developer.doctorOutputEmpty')}
                             </pre>
                           </div>
                           <div className="space-y-2">
-                            <p className="text-[12px] font-semibold text-foreground/80">{t('developer.doctorStderr')}</p>
+                            <p className="text-[12px] font-semibold text-foreground/80">
+                              {t('developer.doctorStderr')}
+                            </p>
                             <pre className="max-h-72 overflow-auto rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-card p-3 text-[11px] font-mono whitespace-pre-wrap break-words">
                               {doctorResult.stderr.trim() || t('developer.doctorOutputEmpty')}
                             </pre>
@@ -897,12 +1186,10 @@ export function Settings() {
                   </div>
 
                   <div className="space-y-4">
-                    <div className="flex items-center justify-between rounded-2xl border border-black/10 dark:border-white/10 p-5 bg-transparent">
+                    <div className={rowClass}>
                       <div>
-                        <Label className="text-[14px] font-medium text-foreground">{t('developer.wsDiagnostic')}</Label>
-                        <p className="text-[13px] text-muted-foreground mt-1">
-                          {t('developer.wsDiagnosticDesc')}
-                        </p>
+                        <Label className={labelClass}>{t('developer.wsDiagnostic')}</Label>
+                        <p className={helperClass}>{t('developer.wsDiagnosticDesc')}</p>
                       </div>
                       <Switch
                         checked={wsDiagnosticEnabled}
@@ -912,7 +1199,9 @@ export function Settings() {
 
                     <div className="flex items-center justify-between">
                       <div>
-                        <Label className="text-[14px] font-medium text-foreground">{t('developer.telemetryViewer')}</Label>
+                        <Label className="text-[14px] font-medium text-foreground">
+                          {t('developer.telemetryViewer')}
+                        </Label>
                         <p className="text-[13px] text-muted-foreground mt-1">
                           {t('developer.telemetryViewerDesc')}
                         </p>
@@ -924,28 +1213,57 @@ export function Settings() {
                         onClick={() => setShowTelemetryViewer((prev) => !prev)}
                         className="rounded-full px-5 h-9 bg-transparent border-black/10 dark:border-white/10 hover:bg-black/5 dark:hover:bg-white/5"
                       >
-                        {showTelemetryViewer
-                          ? t('common:actions.hide')
-                          : t('common:actions.show')}
+                        {showTelemetryViewer ? t('common:actions.hide') : t('common:actions.show')}
                       </Button>
                     </div>
 
                     {showTelemetryViewer && (
-                      <div className="space-y-4 rounded-2xl border border-black/10 dark:border-white/10 p-5 bg-black/5 dark:bg-white/5">
+                      <div className="space-y-3 rounded-lg bg-black/[0.03] dark:bg-white/[0.03] p-4">
                         <div className="flex flex-wrap items-center gap-2">
-                          <Badge variant="secondary" className="rounded-full px-3 py-1 bg-white dark:bg-card border border-black/5 dark:border-white/5">{t('developer.telemetryTotal')}: {telemetryStats.total}</Badge>
-                          <Badge variant={telemetryStats.errorCount > 0 ? 'destructive' : 'secondary'} className={cn("rounded-full px-3 py-1", telemetryStats.errorCount === 0 && "bg-white dark:bg-card border border-black/5 dark:border-white/5")}>
+                          <Badge
+                            variant="secondary"
+                            className="rounded-full px-3 py-1 bg-white dark:bg-card border border-black/5 dark:border-white/5"
+                          >
+                            {t('developer.telemetryTotal')}: {telemetryStats.total}
+                          </Badge>
+                          <Badge
+                            variant={telemetryStats.errorCount > 0 ? 'destructive' : 'secondary'}
+                            className={cn(
+                              'rounded-full px-3 py-1',
+                              telemetryStats.errorCount === 0 &&
+                                'bg-white dark:bg-card border border-black/5 dark:border-white/5'
+                            )}
+                          >
                             {t('developer.telemetryErrors')}: {telemetryStats.errorCount}
                           </Badge>
-                          <Badge variant={telemetryStats.slowCount > 0 ? 'secondary' : 'outline'} className={cn("rounded-full px-3 py-1", telemetryStats.slowCount === 0 && "bg-white dark:bg-card border border-black/5 dark:border-white/5")}>
+                          <Badge
+                            variant={telemetryStats.slowCount > 0 ? 'secondary' : 'outline'}
+                            className={cn(
+                              'rounded-full px-3 py-1',
+                              telemetryStats.slowCount === 0 &&
+                                'bg-white dark:bg-card border border-black/5 dark:border-white/5'
+                            )}
+                          >
                             {t('developer.telemetrySlow')}: {telemetryStats.slowCount}
                           </Badge>
                           <div className="ml-auto flex gap-2">
-                            <Button type="button" variant="outline" size="sm" onClick={handleCopyTelemetry} className="rounded-full h-8 px-4 bg-white dark:bg-card border-black/5 dark:border-white/5 hover:bg-black/5 dark:hover:bg-white/10">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={handleCopyTelemetry}
+                              className="rounded-full h-8 px-4 bg-white dark:bg-card border-black/5 dark:border-white/5 hover:bg-black/5 dark:hover:bg-white/10"
+                            >
                               <Copy className="h-3.5 w-3.5 mr-1.5" />
                               {t('common:actions.copy')}
                             </Button>
-                            <Button type="button" variant="outline" size="sm" onClick={handleClearTelemetry} className="rounded-full h-8 px-4 bg-white dark:bg-card border-black/5 dark:border-white/5 hover:bg-black/5 dark:hover:bg-white/10">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={handleClearTelemetry}
+                              className="rounded-full h-8 px-4 bg-white dark:bg-card border-black/5 dark:border-white/5 hover:bg-black/5 dark:hover:bg-white/10"
+                            >
                               {t('common:actions.clear')}
                             </Button>
                           </div>
@@ -963,13 +1281,23 @@ export function Settings() {
                                     key={item.event}
                                     className="grid grid-cols-[minmax(0,1.6fr)_0.7fr_0.9fr_0.8fr_1fr] gap-2 rounded-lg border border-black/5 dark:border-white/5 bg-white dark:bg-card px-3 py-2"
                                   >
-                                    <span className="truncate font-medium" title={item.event}>{item.event}</span>
+                                    <span className="truncate font-medium" title={item.event}>
+                                      {item.event}
+                                    </span>
                                     <span className="text-muted-foreground">n={item.count}</span>
                                     <span className="text-muted-foreground">
-                                      avg={item.timedCount > 0 ? Math.round(item.totalDuration / item.timedCount) : 0}ms
+                                      avg=
+                                      {item.timedCount > 0
+                                        ? Math.round(item.totalDuration / item.timedCount)
+                                        : 0}
+                                      ms
                                     </span>
-                                    <span className="text-muted-foreground">slow={item.slowCount}</span>
-                                    <span className="text-muted-foreground">err={item.errorCount}</span>
+                                    <span className="text-muted-foreground">
+                                      slow={item.slowCount}
+                                    </span>
+                                    <span className="text-muted-foreground">
+                                      err={item.errorCount}
+                                    </span>
                                   </div>
                                 ))}
                               </div>
@@ -977,19 +1305,32 @@ export function Settings() {
                           )}
                           <div className="space-y-2 p-3 font-mono text-[12px]">
                             {telemetryEntries.length === 0 ? (
-                              <div className="text-muted-foreground text-center py-4">{t('developer.telemetryEmpty')}</div>
+                              <div className="text-muted-foreground text-center py-4">
+                                {t('developer.telemetryEmpty')}
+                              </div>
                             ) : (
                               telemetryEntries
                                 .slice()
                                 .reverse()
                                 .map((entry) => (
-                                  <div key={entry.id} className="rounded-lg border border-black/5 dark:border-white/5 bg-black/5 dark:bg-white/5 p-3">
+                                  <div
+                                    key={entry.id}
+                                    className="rounded-lg border border-black/5 dark:border-white/5 bg-black/5 dark:bg-white/5 p-3"
+                                  >
                                     <div className="flex items-center justify-between gap-3 mb-2">
-                                      <span className="font-semibold text-foreground">{entry.event}</span>
-                                      <span className="text-muted-foreground text-[11px]">{entry.ts}</span>
+                                      <span className="font-semibold text-foreground">
+                                        {entry.event}
+                                      </span>
+                                      <span className="text-muted-foreground text-[11px]">
+                                        {entry.ts}
+                                      </span>
                                     </div>
                                     <pre className="whitespace-pre-wrap text-[11px] text-muted-foreground overflow-x-auto">
-                                      {JSON.stringify({ count: entry.count, ...entry.payload }, null, 2)}
+                                      {JSON.stringify(
+                                        { count: entry.count, ...entry.payload },
+                                        null,
+                                        2
+                                      )}
                                     </pre>
                                   </div>
                                 ))
@@ -1000,39 +1341,27 @@ export function Settings() {
                     )}
                   </div>
                 </div>
-              </div>
+              </SettingsSection>
             </>
           )}
 
-          <Separator className="bg-black/5 dark:bg-white/5" />
-
           {/* Updates */}
-          <div>
-            <h2 className="text-3xl font-serif text-foreground mb-6 font-normal tracking-tight" style={{ fontFamily: 'Georgia, Cambria, "Times New Roman", Times, serif' }}>
-              {t('updates.title')}
-            </h2>
-            <div className="space-y-6">
+          <SettingsSection title={t('updates.title')}>
+            <div className={cn(sectionCardClass, 'space-y-3')}>
               <UpdateSettings />
 
-              <div className="flex items-center justify-between">
+              <div className={rowClass}>
                 <div>
-                  <Label className="text-[15px] font-medium text-foreground">{t('updates.autoCheck')}</Label>
-                  <p className="text-[13px] text-muted-foreground mt-1">
-                    {t('updates.autoCheckDesc')}
-                  </p>
+                  <Label className={labelClass}>{t('updates.autoCheck')}</Label>
+                  <p className={helperClass}>{t('updates.autoCheckDesc')}</p>
                 </div>
-                <Switch
-                  checked={autoCheckUpdate}
-                  onCheckedChange={setAutoCheckUpdate}
-                />
+                <Switch checked={autoCheckUpdate} onCheckedChange={setAutoCheckUpdate} />
               </div>
 
-              <div className="flex items-center justify-between">
+              <div className={rowClass}>
                 <div>
-                  <Label className="text-[15px] font-medium text-foreground">{t('updates.autoDownload')}</Label>
-                  <p className="text-[13px] text-muted-foreground mt-1">
-                    {t('updates.autoDownloadDesc')}
-                  </p>
+                  <Label className={labelClass}>{t('updates.autoDownload')}</Label>
+                  <p className={helperClass}>{t('updates.autoDownloadDesc')}</p>
                 </div>
                 <Switch
                   checked={autoDownloadUpdate}
@@ -1043,18 +1372,152 @@ export function Settings() {
                 />
               </div>
             </div>
-          </div>
+          </SettingsSection>
 
-          <Separator className="bg-black/5 dark:bg-white/5" />
+          {/* Runtime Environment */}
+          <SettingsSection title={t('runtime.title', { defaultValue: 'Runtime Environment' })}>
+            <div className={cn(sectionCardClass, 'space-y-0')}>
+              {runtimeChecking && !runtimeSnapshot ? (
+                <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  {t('runtime.checking', { defaultValue: 'Checking dependencies...' })}
+                </div>
+              ) : runtimeError && !runtimeSnapshot ? (
+                <div className="py-4 text-sm text-red-500">{runtimeError}</div>
+              ) : runtimeSnapshot ? (
+                <>
+                  {runtimeSnapshot.deps.map((dep: DepStatus, idx: number) => {
+                    const prog = runtimeProgress[dep.kind];
+                    const isWorking = prog && prog.phase !== 'done' && prog.phase !== 'error';
+                    const isError = prog?.phase === 'error';
+                    const isDone = dep.installed || prog?.phase === 'done';
+
+                    return (
+                      <div
+                        key={dep.kind}
+                        className={cn(
+                          'px-1 py-3 transition-colors duration-200',
+                          idx < runtimeSnapshot.deps.length - 1 &&
+                            'border-b border-black/5 dark:border-white/5',
+                          isWorking && 'bg-blue-500/[0.02] rounded-lg'
+                        )}
+                      >
+                        <div className="flex items-center justify-between gap-4">
+                          <div className="flex items-center gap-3">
+                            {isDone ? (
+                              <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" />
+                            ) : isWorking ? (
+                              <Loader2 className="h-4 w-4 shrink-0 animate-spin text-blue-500" />
+                            ) : isError ? (
+                              <XCircle className="h-4 w-4 shrink-0 text-red-500" />
+                            ) : (
+                              <XCircle className="h-4 w-4 shrink-0 text-amber-500" />
+                            )}
+                            <div>
+                              <p className="text-[13px] font-semibold capitalize text-foreground/90">
+                                {dep.kind === 'python' ? 'Python 3.12 (uv)' : dep.kind}
+                              </p>
+                              <p className="text-[11px] text-muted-foreground">
+                                {isWorking
+                                  ? prog.message
+                                  : isError
+                                    ? prog?.error || '安装失败'
+                                    : dep.detail && !dep.installed
+                                      ? dep.detail
+                                      : null}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            {dep.version && isDone ? (
+                              <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-0.5 text-[12px] font-mono text-emerald-700 dark:text-emerald-400">
+                                {dep.version}
+                              </span>
+                            ) : !isDone && !isWorking ? (
+                              <span className="text-[12px] text-red-500/80">
+                                {t('runtime.notInstalled', { defaultValue: 'Not installed' })}
+                              </span>
+                            ) : null}
+                            <span className="rounded-full border border-black/8 bg-black/[0.03] px-2 py-0.5 text-[11px] text-muted-foreground dark:border-white/10 dark:bg-white/[0.04]">
+                              {dep.source}
+                            </span>
+                          </div>
+                        </div>
+
+                        {isWorking && prog ? (
+                          <div className="mt-2 ml-7 space-y-1">
+                            <div className="h-1.5 w-full overflow-hidden rounded-full bg-black/5 dark:bg-white/10">
+                              <div
+                                className="h-full rounded-full bg-blue-500 transition-all duration-300"
+                                style={{ width: `${prog.percent}%` }}
+                              />
+                            </div>
+                            <div className="flex items-center justify-between text-[11px]">
+                              <span className="flex items-center gap-1 text-blue-600 dark:text-blue-400">
+                                {prog.phase === 'downloading' && <Download className="h-3 w-3" />}
+                                {prog.phase === 'extracting' && <Package className="h-3 w-3" />}
+                                {prog.phase === 'verifying' && <Search className="h-3 w-3" />}
+                                {prog.phase === 'installing' && <Wrench className="h-3 w-3" />}
+                                {prog.phase === 'downloading'
+                                  ? '下载中'
+                                  : prog.phase === 'extracting'
+                                    ? '解压中'
+                                    : prog.phase === 'installing'
+                                      ? '安装中'
+                                      : prog.phase === 'verifying'
+                                        ? '验证中'
+                                        : prog.phase}
+                              </span>
+                              <span className="font-mono text-muted-foreground">
+                                {prog.percent}%
+                              </span>
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </>
+              ) : null}
+              <div className="flex items-center justify-end gap-2 pt-2">
+                {runtimeSnapshot && !runtimeSnapshot.allReady && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void handleInstallMissing()}
+                    disabled={runtimeInstalling || runtimeChecking}
+                    className="h-8 rounded-full px-3 text-[12px] border-blue-500/30 text-blue-600 hover:bg-blue-500/10 dark:text-blue-400"
+                  >
+                    {runtimeInstalling ? (
+                      <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                    ) : (
+                      <Download className="h-3.5 w-3.5 mr-1.5" />
+                    )}
+                    {t('runtime.installMissing', { defaultValue: '一键安装' })}
+                  </Button>
+                )}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => void loadRuntimeSnapshot()}
+                  disabled={runtimeChecking || runtimeInstalling}
+                  className="h-8 rounded-full px-3 text-[12px] hover:bg-black/5 dark:hover:bg-white/10"
+                >
+                  <RefreshCw
+                    className={cn('h-3.5 w-3.5 mr-1.5', runtimeChecking && 'animate-spin')}
+                  />
+                  {t('runtime.recheck', { defaultValue: 'Recheck' })}
+                </Button>
+              </div>
+            </div>
+          </SettingsSection>
 
           {/* About */}
-          <div>
-            <h2 className="text-3xl font-serif text-foreground mb-6 font-normal tracking-tight" style={{ fontFamily: 'Georgia, Cambria, "Times New Roman", Times, serif' }}>
-              {t('about.title')}
-            </h2>
-            <div className="space-y-3 text-[14px] text-muted-foreground">
+          <SettingsSection title={t('about.title')}>
+            <div className={cn(sectionCardClass, 'space-y-2 text-[14px] text-muted-foreground')}>
               <p>
-                <strong className="text-foreground font-semibold">{t('about.appName')}</strong> - {t('about.tagline')}
+                <strong className="text-foreground font-semibold">{t('about.appName')}</strong> -{' '}
+                {t('about.tagline')}
               </p>
               <p>{t('about.basedOn')}</p>
               <p>{t('about.version', { version: currentVersion })}</p>
@@ -1069,21 +1532,26 @@ export function Settings() {
                 <Button
                   variant="link"
                   className="h-auto p-0 text-[14px] text-blue-500 hover:text-blue-600 font-medium"
-                  onClick={() => window.electron.openExternal('https://github.com/ValueCell-ai/ClawX')}
+                  onClick={() =>
+                    window.electron.openExternal('https://github.com/ValueCell-ai/ClawX')
+                  }
                 >
                   {t('about.github')}
                 </Button>
                 <Button
                   variant="link"
                   className="h-auto p-0 text-[14px] text-blue-500 hover:text-blue-600 font-medium"
-                  onClick={() => window.electron.openExternal('https://icnnp7d0dymg.feishu.cn/wiki/UyfOwQ2cAiJIP6kqUW8cte5Bnlc')}
+                  onClick={() =>
+                    window.electron.openExternal(
+                      'https://icnnp7d0dymg.feishu.cn/wiki/UyfOwQ2cAiJIP6kqUW8cte5Bnlc'
+                    )
+                  }
                 >
                   {t('about.faq')}
                 </Button>
               </div>
             </div>
-          </div>
-
+          </SettingsSection>
         </div>
       </div>
     </div>

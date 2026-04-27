@@ -1,16 +1,12 @@
 import { useEffect, useReducer, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import {
-  ChevronLeft,
-  ChevronRight,
-  X,
-} from 'lucide-react';
+import { ChevronLeft, ChevronRight, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useGatewayStore } from '@/stores/gateway';
 import { useSettingsStore } from '@/stores/settings';
 import { hostApiFetch } from '@/lib/host-api';
 import { trackUiEvent } from '@/lib/telemetry';
-import { ProvidersSettings } from '@/components/settings/ProvidersSettings';
+import { ProvidersSettingsContent } from '@/components/settings/ProvidersSettings';
 import { FeedbackState } from '@/components/common/FeedbackState';
 import {
   filterUsageHistoryByWindow,
@@ -28,9 +24,10 @@ export function Models() {
   const gatewayStatus = useGatewayStore((state) => state.status);
   const devModeUnlocked = useSettingsStore((state) => state.devModeUnlocked);
   const isGatewayRunning = gatewayStatus.state === 'running';
-  const usageFetchMaxAttempts = window.electron.platform === 'win32'
-    ? WINDOWS_USAGE_FETCH_MAX_ATTEMPTS
-    : DEFAULT_USAGE_FETCH_MAX_ATTEMPTS;
+  const usageFetchMaxAttempts =
+    window.electron.platform === 'win32'
+      ? WINDOWS_USAGE_FETCH_MAX_ATTEMPTS
+      : DEFAULT_USAGE_FETCH_MAX_ATTEMPTS;
 
   const [usageGroupBy, setUsageGroupBy] = useState<UsageGroupBy>('model');
   const [usageWindow, setUsageWindow] = useState<UsageWindow>('7d');
@@ -59,7 +56,7 @@ export function Models() {
           return state;
       }
     },
-    { status: 'idle' as const, data: [] as UsageHistoryEntry[] },
+    { status: 'idle' as const, data: [] as UsageHistoryEntry[] }
   );
 
   const usageFetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -188,54 +185,59 @@ export function Models() {
   const usagePageSize = 5;
   const usageTotalPages = Math.max(1, Math.ceil(filteredUsageHistory.length / usagePageSize));
   const safeUsagePage = Math.min(usagePage, usageTotalPages);
-  const pagedUsageHistory = filteredUsageHistory.slice((safeUsagePage - 1) * usagePageSize, safeUsagePage * usagePageSize);
+  const pagedUsageHistory = filteredUsageHistory.slice(
+    (safeUsagePage - 1) * usagePageSize,
+    safeUsagePage * usagePageSize
+  );
   const usageLoading = isGatewayRunning && fetchState.status === 'loading';
 
   return (
-    <div className="flex flex-col -m-6 dark:bg-background h-[calc(100vh-2.5rem)] overflow-hidden">
-      <div className="w-full max-w-5xl mx-auto flex flex-col h-full p-10 pt-16">
-        
+    <div className="min-h-[calc(100vh-2.5rem)] overflow-y-auto -m-6 bg-[radial-gradient(circle_at_top,_rgba(16,185,129,0.10),_transparent_28%),linear-gradient(180deg,rgba(255,255,255,0.72),rgba(255,255,255,0))] dark:bg-[radial-gradient(circle_at_top,_rgba(16,185,129,0.12),_transparent_24%),linear-gradient(180deg,rgba(255,255,255,0.02),rgba(255,255,255,0))]">
+      <div className="mx-auto flex w-full max-w-5xl flex-col p-8 pb-10 pt-10 md:p-10 md:pb-12 md:pt-12">
         {/* Header */}
-        <div className="flex flex-col md:flex-row md:items-start justify-between mb-12 shrink-0 gap-4">
-          <div>
-            <h1 className="text-5xl md:text-6xl font-serif text-foreground mb-3 font-normal tracking-tight" style={{ fontFamily: 'Georgia, Cambria, "Times New Roman", Times, serif' }}>
-              {t('dashboard:models.title')}
-            </h1>
-            <p className="text-[17px] text-foreground/70 font-medium">
-              {t('dashboard:models.subtitle')}
-            </p>
-          </div>
+        <div className="mb-6">
+          <h1 className="mb-2 text-[30px] font-heading font-normal tracking-tight text-foreground md:text-[38px]">
+            {t('dashboard:models.title')}
+          </h1>
+          <p className="text-[16px] font-medium text-foreground/70">
+            {t('dashboard:models.subtitle')}
+          </p>
         </div>
 
         {/* Content Area */}
-        <div className="flex-1 overflow-y-auto pr-2 pb-10 min-h-0 -mr-2 space-y-12">
-          
+        <div className="-mr-2 space-y-8 pr-2 pb-10">
           {/* AI Providers Section */}
-          <ProvidersSettings />
+          <ProvidersSettingsContent showHeader />
 
           {/* Token Usage History Section */}
           <div>
-            <h2 className="text-3xl font-serif text-foreground mb-6 font-normal tracking-tight" style={{ fontFamily: 'Georgia, Cambria, "Times New Roman", Times, serif' }}>
+            <h2 className="text-3xl font-heading text-foreground mb-6 font-normal tracking-tight">
               {t('dashboard:recentTokenHistory.title', 'Token Usage History')}
             </h2>
             <div>
               {usageLoading ? (
-                <div className="flex items-center justify-center py-12 text-muted-foreground bg-black/5 dark:bg-white/5 rounded-3xl border border-transparent border-dashed">
-                  <FeedbackState state="loading" title={t('dashboard:recentTokenHistory.loading')} />
+                <div className="flex items-center justify-center py-12 text-muted-foreground bg-black/5 dark:bg-white/5 rounded-xl border border-transparent border-dashed">
+                  <FeedbackState
+                    state="loading"
+                    title={t('dashboard:recentTokenHistory.loading')}
+                  />
                 </div>
               ) : visibleUsageHistory.length === 0 ? (
-                <div className="flex items-center justify-center py-12 text-muted-foreground bg-black/5 dark:bg-white/5 rounded-3xl border border-transparent border-dashed">
+                <div className="flex items-center justify-center py-12 text-muted-foreground bg-black/5 dark:bg-white/5 rounded-xl border border-transparent border-dashed">
                   <FeedbackState state="empty" title={t('dashboard:recentTokenHistory.empty')} />
                 </div>
               ) : filteredUsageHistory.length === 0 ? (
-                <div className="flex items-center justify-center py-12 text-muted-foreground bg-black/5 dark:bg-white/5 rounded-3xl border border-transparent border-dashed">
-                  <FeedbackState state="empty" title={t('dashboard:recentTokenHistory.emptyForWindow')} />
+                <div className="flex items-center justify-center py-12 text-muted-foreground bg-black/5 dark:bg-white/5 rounded-xl border border-transparent border-dashed">
+                  <FeedbackState
+                    state="empty"
+                    title={t('dashboard:recentTokenHistory.emptyForWindow')}
+                  />
                 </div>
               ) : (
-                <div className="space-y-6">
+                <div className="space-y-4 rounded-xl border border-black/7 bg-white/60 p-4 dark:border-white/10 dark:bg-white/[0.03]">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div className="flex flex-wrap items-center gap-3">
-                      <div className="flex rounded-xl bg-transparent p-1 border border-black/10 dark:border-white/10">
+                      <div className="flex rounded-[16px] bg-transparent p-1 border border-black/10 dark:border-white/10">
                         <Button
                           variant={usageGroupBy === 'model' ? 'secondary' : 'ghost'}
                           size="sm"
@@ -243,7 +245,11 @@ export function Models() {
                             setUsageGroupBy('model');
                             setUsagePage(1);
                           }}
-                          className={usageGroupBy === 'model' ? "rounded-lg bg-black/5 dark:bg-white/10 text-foreground" : "rounded-lg text-muted-foreground"}
+                          className={
+                            usageGroupBy === 'model'
+                              ? 'rounded-lg bg-black/10 dark:bg-white/10 text-foreground'
+                              : 'rounded-lg text-muted-foreground'
+                          }
                         >
                           {t('dashboard:recentTokenHistory.groupByModel')}
                         </Button>
@@ -254,12 +260,16 @@ export function Models() {
                             setUsageGroupBy('day');
                             setUsagePage(1);
                           }}
-                          className={usageGroupBy === 'day' ? "rounded-lg bg-black/5 dark:bg-white/10 text-foreground" : "rounded-lg text-muted-foreground"}
+                          className={
+                            usageGroupBy === 'day'
+                              ? 'rounded-lg bg-black/10 dark:bg-white/10 text-foreground'
+                              : 'rounded-lg text-muted-foreground'
+                          }
                         >
                           {t('dashboard:recentTokenHistory.groupByTime')}
                         </Button>
                       </div>
-                      <div className="flex rounded-xl bg-transparent p-1 border border-black/10 dark:border-white/10">
+                      <div className="flex rounded-[16px] bg-transparent p-1 border border-black/10 dark:border-white/10">
                         <Button
                           variant={usageWindow === '7d' ? 'secondary' : 'ghost'}
                           size="sm"
@@ -267,7 +277,11 @@ export function Models() {
                             setUsageWindow('7d');
                             setUsagePage(1);
                           }}
-                          className={usageWindow === '7d' ? "rounded-lg bg-black/5 dark:bg-white/10 text-foreground" : "rounded-lg text-muted-foreground"}
+                          className={
+                            usageWindow === '7d'
+                              ? 'rounded-lg bg-black/10 dark:bg-white/10 text-foreground'
+                              : 'rounded-lg text-muted-foreground'
+                          }
                         >
                           {t('dashboard:recentTokenHistory.last7Days')}
                         </Button>
@@ -278,7 +292,11 @@ export function Models() {
                             setUsageWindow('30d');
                             setUsagePage(1);
                           }}
-                          className={usageWindow === '30d' ? "rounded-lg bg-black/5 dark:bg-white/10 text-foreground" : "rounded-lg text-muted-foreground"}
+                          className={
+                            usageWindow === '30d'
+                              ? 'rounded-lg bg-black/10 dark:bg-white/10 text-foreground'
+                              : 'rounded-lg text-muted-foreground'
+                          }
                         >
                           {t('dashboard:recentTokenHistory.last30Days')}
                         </Button>
@@ -289,14 +307,20 @@ export function Models() {
                             setUsageWindow('all');
                             setUsagePage(1);
                           }}
-                          className={usageWindow === 'all' ? "rounded-lg bg-black/5 dark:bg-white/10 text-foreground" : "rounded-lg text-muted-foreground"}
+                          className={
+                            usageWindow === 'all'
+                              ? 'rounded-lg bg-black/10 dark:bg-white/10 text-foreground'
+                              : 'rounded-lg text-muted-foreground'
+                          }
                         >
                           {t('dashboard:recentTokenHistory.allTime')}
                         </Button>
                       </div>
                     </div>
                     <p className="text-[13px] font-medium text-muted-foreground">
-                      {t('dashboard:recentTokenHistory.showingLast', { count: filteredUsageHistory.length })}
+                      {t('dashboard:recentTokenHistory.showingLast', {
+                        count: filteredUsageHistory.length,
+                      })}
                     </p>
                   </div>
 
@@ -313,7 +337,7 @@ export function Models() {
                     {pagedUsageHistory.map((entry) => (
                       <div
                         key={`${entry.sessionId}-${entry.timestamp}`}
-                        className="rounded-2xl bg-transparent border border-black/10 dark:border-white/10 p-5 hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
+                        className="rounded-lg p-4 hover:bg-black/[0.03] dark:hover:bg-white/[0.03] transition-colors"
                       >
                         <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0">
@@ -321,27 +345,55 @@ export function Models() {
                               {entry.model || t('dashboard:recentTokenHistory.unknownModel')}
                             </p>
                             <p className="text-[13px] text-muted-foreground truncate mt-0.5">
-                              {[entry.provider, entry.agentId, entry.sessionId].filter(Boolean).join(' • ')}
+                              {[entry.provider, entry.agentId, entry.sessionId]
+                                .filter(Boolean)
+                                .join(' • ')}
                             </p>
                           </div>
                           <div className="text-right shrink-0">
-                            <p className="font-bold text-[15px]">{formatTokenCount(entry.totalTokens)}</p>
+                            <p className="font-bold text-[15px]">
+                              {formatTokenCount(entry.totalTokens)}
+                            </p>
                             <p className="text-[12px] text-muted-foreground mt-0.5">
                               {formatUsageTimestamp(entry.timestamp)}
                             </p>
                           </div>
                         </div>
                         <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1.5 text-[12.5px] font-medium text-muted-foreground">
-                          <span className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-sky-500"></div>{t('dashboard:recentTokenHistory.input', { value: formatTokenCount(entry.inputTokens) })}</span>
-                          <span className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-violet-500"></div>{t('dashboard:recentTokenHistory.output', { value: formatTokenCount(entry.outputTokens) })}</span>
+                          <span className="flex items-center gap-1.5">
+                            <div className="w-2 h-2 rounded-full bg-sky-500"></div>
+                            {t('dashboard:recentTokenHistory.input', {
+                              value: formatTokenCount(entry.inputTokens),
+                            })}
+                          </span>
+                          <span className="flex items-center gap-1.5">
+                            <div className="w-2 h-2 rounded-full bg-violet-500"></div>
+                            {t('dashboard:recentTokenHistory.output', {
+                              value: formatTokenCount(entry.outputTokens),
+                            })}
+                          </span>
                           {entry.cacheReadTokens > 0 && (
-                            <span className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-amber-500"></div>{t('dashboard:recentTokenHistory.cacheRead', { value: formatTokenCount(entry.cacheReadTokens) })}</span>
+                            <span className="flex items-center gap-1.5">
+                              <div className="w-2 h-2 rounded-full bg-amber-500"></div>
+                              {t('dashboard:recentTokenHistory.cacheRead', {
+                                value: formatTokenCount(entry.cacheReadTokens),
+                              })}
+                            </span>
                           )}
                           {entry.cacheWriteTokens > 0 && (
-                            <span className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-amber-500"></div>{t('dashboard:recentTokenHistory.cacheWrite', { value: formatTokenCount(entry.cacheWriteTokens) })}</span>
+                            <span className="flex items-center gap-1.5">
+                              <div className="w-2 h-2 rounded-full bg-amber-500"></div>
+                              {t('dashboard:recentTokenHistory.cacheWrite', {
+                                value: formatTokenCount(entry.cacheWriteTokens),
+                              })}
+                            </span>
                           )}
                           {typeof entry.costUsd === 'number' && Number.isFinite(entry.costUsd) && (
-                            <span className="flex items-center gap-1.5 ml-auto text-foreground/80 bg-black/5 dark:bg-white/5 px-2 py-0.5 rounded-md">{t('dashboard:recentTokenHistory.cost', { amount: entry.costUsd.toFixed(4) })}</span>
+                            <span className="flex items-center gap-1.5 ml-auto text-foreground/80 bg-black/5 dark:bg-white/5 px-2 py-0.5 rounded-md">
+                              {t('dashboard:recentTokenHistory.cost', {
+                                amount: entry.costUsd.toFixed(4),
+                              })}
+                            </span>
                           )}
                           {devModeUnlocked && entry.content && (
                             <Button
@@ -360,7 +412,10 @@ export function Models() {
 
                   <div className="flex items-center justify-between gap-3 pt-2">
                     <p className="text-[13px] font-medium text-muted-foreground">
-                      {t('dashboard:recentTokenHistory.page', { current: safeUsagePage, total: usageTotalPages })}
+                      {t('dashboard:recentTokenHistory.page', {
+                        current: safeUsagePage,
+                        total: usageTotalPages,
+                      })}
                     </p>
                     <div className="flex items-center gap-2">
                       <Button
@@ -389,7 +444,6 @@ export function Models() {
               )}
             </div>
           </div>
-
         </div>
       </div>
       {devModeUnlocked && selectedUsageEntry && (
@@ -452,7 +506,7 @@ function UsageBarChart({
   const maxTokens = Math.max(...groups.map((group) => group.totalTokens), 1);
 
   return (
-    <div className="space-y-4 bg-transparent p-5 rounded-2xl border border-black/10 dark:border-white/10">
+    <div className="space-y-4 px-1">
       <div className="flex flex-wrap gap-4 text-[13px] font-medium text-muted-foreground mb-2">
         <span className="inline-flex items-center gap-2">
           <span className="h-2.5 w-2.5 rounded-full bg-sky-500" />
@@ -479,9 +533,10 @@ function UsageBarChart({
             <div
               className="flex h-full overflow-hidden rounded-full"
               style={{
-                width: group.totalTokens > 0
-                  ? `${Math.max((group.totalTokens / maxTokens) * 100, 6)}%`
-                  : '0%',
+                width:
+                  group.totalTokens > 0
+                    ? `${Math.max((group.totalTokens / maxTokens) * 100, 6)}%`
+                    : '0%',
               }}
             >
               {group.inputTokens > 0 && (
@@ -526,13 +581,17 @@ function UsageContentPopup({
   unknownModelLabel: string;
 }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4" role="dialog" aria-modal="true">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4"
+      role="dialog"
+      aria-modal="true"
+    >
       <div className="w-full max-w-3xl rounded-2xl border border-black/10 dark:border-white/10 bg-background shadow-xl">
         <div className="flex items-start justify-between gap-3 border-b border-black/10 dark:border-white/10 px-5 py-4">
           <div className="min-w-0">
             <p className="text-sm font-semibold text-foreground">{title}</p>
             <p className="text-xs text-muted-foreground truncate mt-0.5">
-              {(entry.model || unknownModelLabel)} • {formatUsageTimestamp(entry.timestamp)}
+              {entry.model || unknownModelLabel} • {formatUsageTimestamp(entry.timestamp)}
             </p>
           </div>
           <Button

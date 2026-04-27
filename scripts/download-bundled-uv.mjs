@@ -4,8 +4,10 @@ import 'zx/globals';
 
 const ROOT_DIR = path.resolve(__dirname, '..');
 const UV_VERSION = '0.10.0';
-const BASE_URL = `https://github.com/astral-sh/uv/releases/download/${UV_VERSION}`;
 const OUTPUT_BASE = path.join(ROOT_DIR, 'resources', 'bin');
+const DEFAULT_BASE_URL = `https://github.com/astral-sh/uv/releases/download/${UV_VERSION}`;
+const CUSTOM_BASE_URL = process.env.UV_DOWNLOAD_BASE_URL?.trim();
+const DOWNLOAD_TIMEOUT_MS = Number(process.env.UV_DOWNLOAD_TIMEOUT_MS || '60000');
 
 // Mapping Node platforms/archs to uv release naming
 const TARGETS = {
@@ -52,23 +54,49 @@ async function setupTarget(id) {
   const targetDir = path.join(OUTPUT_BASE, id);
   const tempDir = path.join(ROOT_DIR, 'temp_uv_extract');
   const archivePath = path.join(ROOT_DIR, target.filename);
-  const downloadUrl = `${BASE_URL}/${target.filename}`;
+  const destBin = path.join(targetDir, target.binName);
+
+  if (await fs.pathExists(destBin)) {
+    echo(chalk.green`✅ Reusing existing binary: ${destBin}`);
+    return;
+  }
+
+  const baseUrls = [CUSTOM_BASE_URL, DEFAULT_BASE_URL].filter(Boolean);
 
   echo(chalk.blue`\n📦 Setting up uv for ${id}...`);
 
   // Cleanup & Prep
-  await fs.remove(targetDir);
   await fs.remove(tempDir);
   await fs.ensureDir(targetDir);
   await fs.ensureDir(tempDir);
 
   try {
-    // Download
-    echo`⬇️ Downloading: ${downloadUrl}`;
-    const response = await fetch(downloadUrl);
-    if (!response.ok) throw new Error(`Failed to download: ${response.statusText}`);
-    const buffer = await response.arrayBuffer();
-    await fs.writeFile(archivePath, Buffer.from(buffer));
+    let downloaded = false;
+    let lastError = null;
+
+    for (const baseUrl of baseUrls) {
+      const downloadUrl = `${baseUrl.replace(/\/$/, '')}/${target.filename}`;
+      try {
+        echo`⬇️ Downloading: ${downloadUrl}`;
+        const response = await fetch(downloadUrl, {
+          signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
+        });
+        if (!response.ok) {
+          throw new Error(`Failed to download: ${response.status} ${response.statusText}`);
+        }
+        const buffer = await response.arrayBuffer();
+        await fs.writeFile(archivePath, Buffer.from(buffer));
+        downloaded = true;
+        break;
+      } catch (error) {
+        lastError = error;
+        echo(chalk.yellow`⚠️ Download failed from ${downloadUrl}: ${error.message}`);
+      }
+    }
+
+    if (!downloaded) {
+      throw lastError || new Error(`Could not download ${target.filename}`);
+    }
 
     // Extract
     echo`📂 Extracting...`;
@@ -88,8 +116,6 @@ async function setupTarget(id) {
     // uv archives usually contain a folder named after the target
     const folderName = target.filename.replace('.tar.gz', '').replace('.zip', '');
     const sourceBin = path.join(tempDir, folderName, target.binName);
-    const destBin = path.join(targetDir, target.binName);
-
     if (await fs.pathExists(sourceBin)) {
       await fs.move(sourceBin, destBin, { overwrite: true });
     } else {

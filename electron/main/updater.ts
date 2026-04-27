@@ -183,7 +183,7 @@ export class AppUpdater extends EventEmitter {
       if (result == null) {
         this.updateStatus({
           status: 'error',
-          error: 'Update check skipped (dev mode – app is not packaged)',
+          error: 'UPDATE_CHECK_SKIPPED_DEV_MODE',
         });
         return null;
       }

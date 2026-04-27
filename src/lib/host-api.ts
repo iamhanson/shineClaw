@@ -28,6 +28,25 @@ type HostApiProxyData = {
   text?: string;
 };
 
+function resolveProxyDataErrorMessage(data: HostApiProxyData): string {
+  if (typeof data.text === 'string' && data.text.trim()) {
+    return data.text.trim();
+  }
+
+  if (data.json && typeof data.json === 'object' && 'error' in (data.json as Record<string, unknown>)) {
+    const error = (data.json as Record<string, unknown>).error;
+    if (typeof error === 'string' && error.trim()) {
+      return error.trim();
+    }
+  }
+
+  if (typeof data.status === 'number') {
+    return `HTTP ${data.status}`;
+  }
+
+  return 'Host API proxy request failed';
+}
+
 function headersToRecord(headers?: HeadersInit): Record<string, string> {
   if (!headers) return {};
   if (headers instanceof Headers) return Object.fromEntries(headers.entries());
@@ -83,6 +102,15 @@ function parseUnifiedProxyResponse<T>(
     durationMs: Date.now() - startedAt,
     status: data.status ?? 200,
   });
+
+  if (data.ok === false || (typeof data.status === 'number' && data.status >= 400)) {
+    throw normalizeAppError(new Error(resolveProxyDataErrorMessage(data)), {
+      source: 'ipc-proxy',
+      status: data.status,
+      path,
+      method,
+    });
+  }
 
   if (data.status === 204) return undefined as T;
   if (data.json !== undefined) return data.json as T;

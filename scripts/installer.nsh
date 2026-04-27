@@ -1,4 +1,4 @@
-; ClawX Custom NSIS Installer/Uninstaller Script
+; 阿山 Custom NSIS Installer/Uninstaller Script
 ;
 ; Install: enables long paths, adds resources\cli to user PATH for openclaw CLI.
 ; Uninstall: removes the PATH entry and optionally deletes user data.
@@ -111,11 +111,11 @@
 
   ; Ask user if they want to completely remove all user data
   MessageBox MB_YESNO|MB_ICONQUESTION \
-    "Do you want to completely remove all ClawX user data?$\r$\n$\r$\nThis will delete:$\r$\n  • .openclaw folder (configuration & skills)$\r$\n  • AppData\Local\clawx (local app data)$\r$\n  • AppData\Roaming\clawx (roaming app data)$\r$\n$\r$\nSelect 'No' to keep your data for future reinstallation." \
+    "Do you want to completely remove all 阿山 user data?$\r$\n$\r$\nThis will delete:$\r$\n  • .openclaw folder (configuration & skills)$\r$\n  • AppData\Local\clawx (local app data)$\r$\n  • AppData\Roaming\clawx (roaming app data)$\r$\n$\r$\nSelect 'No' to keep your data for future reinstallation." \
     /SD IDNO IDYES _cu_removeData IDNO _cu_skipRemove
 
   _cu_removeData:
-    ; Kill any lingering ClawX processes to release file locks on electron-store
+    ; Kill any lingering 阿山 processes to release file locks on electron-store
     ; JSON files (settings.json, clawx-providers.json, window-state.json, etc.)
     ${nsProcess::FindProcess} "${APP_EXECUTABLE_FILENAME}" $R0
     ${if} $R0 == 0
@@ -199,4 +199,3 @@
   _cu_enumDone:
   _cu_skipRemove:
 !macroend
-

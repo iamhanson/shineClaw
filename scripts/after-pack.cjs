@@ -19,7 +19,7 @@
  *      @mariozechner/clipboard).
  */
 
-const { cpSync, existsSync, readdirSync, rmSync, statSync, mkdirSync, realpathSync } = require('fs');
+const { cpSync, existsSync, readdirSync, rmSync, statSync, mkdirSync, realpathSync, copyFileSync, chmodSync } = require('fs');
 const { join, dirname, basename } = require('path');
 
 // On Windows, paths in pnpm's virtual store can exceed the default MAX_PATH
@@ -233,9 +233,8 @@ function patchBrokenModules(nodeModulesDir) {
     }
   }
 
-  // https-proxy-agent: add a CJS `require` condition only when we can point to
-  // a real CommonJS entry. Mapping `require` to an ESM file can cause
-  // ERR_REQUIRE_CYCLE_MODULE in Node.js CLI/TUI flows.
+  // https-proxy-agent: normalize exports so packaged resolution can always find
+  // a main entry. If we have a real CJS file, also expose `require`.
   const hpaPkgPath = join(nodeModulesDir, 'https-proxy-agent', 'package.json');
   if (existsSync(hpaPkgPath)) {
     try {
@@ -268,19 +267,28 @@ function patchBrokenModules(nodeModulesDir) {
         fsExistsSync(join(pkgDir, candidate)),
       );
 
-      // Only patch if exports exists, lacks a CJS `require` condition, and we
-      // have a verified CJS target file.
-      if (exp && !hasRequireCondition && requireTarget) {
-        pkg.exports = {
-          '.': {
-            import: importEntry || requireTarget,
-            require: requireTarget,
-            default: importEntry || requireTarget,
-          },
+      const normalizedImport = importEntry || requireTarget;
+      const needsNormalization =
+        Boolean(normalizedImport) &&
+        (
+          !exp ||
+          (typeof exp === 'object' && !exp['.']) ||
+          (typeof exp === 'object' && !exp.default)
+        );
+
+      if (needsNormalization) {
+        const dotExport = {
+          import: normalizedImport,
+          default: normalizedImport,
         };
+        if (requireTarget) {
+          dotExport.require = requireTarget;
+        }
+
+        pkg.exports = { '.': dotExport };
         writeFileSync(hpaPkgPath, JSON.stringify(pkg, null, 2) + '\n', 'utf8');
         count++;
-        console.log(`[after-pack] 🩹 Patched https-proxy-agent exports for CJS compatibility (require=${requireTarget})`);
+        console.log(`[after-pack] 🩹 Normalized https-proxy-agent exports (import=${normalizedImport}${requireTarget ? `, require=${requireTarget}` : ''})`);
       }
     } catch (err) {
       console.warn('[after-pack] ⚠️  Failed to patch https-proxy-agent:', err.message);
@@ -290,6 +298,32 @@ function patchBrokenModules(nodeModulesDir) {
   if (count > 0) {
     console.log(`[after-pack] 🩹 Patched ${count} broken module(s) in ${nodeModulesDir}`);
   }
+}
+
+function copyBundledBin(resourcesDir, platform, arch) {
+  const rootDir = join(__dirname, '..');
+  const sourceDir = join(rootDir, 'resources', 'bin', `${platform}-${arch}`);
+  if (!existsSync(sourceDir)) {
+    console.warn(`[after-pack] ⚠️  Bundled bin source not found: ${sourceDir}`);
+    return;
+  }
+
+  const destDir = join(resourcesDir, 'bin');
+  mkdirSync(destDir, { recursive: true });
+
+  for (const entry of readdirSync(sourceDir)) {
+    const src = join(sourceDir, entry);
+    const dest = join(destDir, entry);
+    if (!statSync(src).isFile()) continue;
+    copyFileSync(src, dest);
+    try {
+      chmodSync(dest, 0o755);
+    } catch {
+      // Ignore chmod failures on non-posix targets.
+    }
+  }
+
+  console.log(`[after-pack] ✅ Copied bundled runtime binaries from ${sourceDir} to ${destDir}`);
 }
 
 // ── Plugin ID mismatch patcher ───────────────────────────────────────────────
@@ -460,8 +494,13 @@ exports.default = async function afterPack(context) {
 
   let resourcesDir;
   if (platform === 'darwin') {
-    const appName = context.packager.appInfo.productFilename;
-    resourcesDir = join(appOutDir, `${appName}.app`, 'Contents', 'Resources');
+    const directResourcesDir = join(appOutDir, 'Contents', 'Resources');
+    if (existsSync(directResourcesDir)) {
+      resourcesDir = directResourcesDir;
+    } else {
+      const appName = context.packager.appInfo.productFilename;
+      resourcesDir = join(appOutDir, `${appName}.app`, 'Contents', 'Resources');
+    }
   } else {
     resourcesDir = join(appOutDir, 'resources');
   }
@@ -470,6 +509,8 @@ exports.default = async function afterPack(context) {
   const dest = join(openclawRoot, 'node_modules');
   const nodeModulesRoot = join(__dirname, '..', 'node_modules');
   const pluginsDestRoot = join(resourcesDir, 'openclaw-plugins');
+
+  copyBundledBin(resourcesDir, platform, arch);
 
   if (!existsSync(src)) {
     console.warn('[after-pack] ⚠️  build/openclaw/node_modules not found. Run bundle-openclaw first.');

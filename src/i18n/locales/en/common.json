@@ -2,7 +2,8 @@
     "sidebar": {
         "chat": "Chat",
         "newChat": "New Chat",
-        "cronTasks": "Cron Tasks",
+        "cronTasks": "Task Management",
+        "calendar": "Calendar",
         "skills": "Skills",
         "agents": "Agents",
         "channels": "Channels",
@@ -11,7 +12,9 @@
         "devConsole": "Developer Console",
         "models": "Models",
         "deleteSessionConfirm": "Are you sure you want to delete session \"{{label}}\"?",
-        "openClawPage": "OpenClaw Page"
+        "renameSession": "Rename Session",
+        "openClawPage": "WebUI",
+        "mailAssistant": "Mail Assistant"
     },
     "actions": {
         "save": "Save",

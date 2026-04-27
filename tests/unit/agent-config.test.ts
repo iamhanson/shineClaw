@@ -363,4 +363,37 @@ describe('agent config lifecycle', () => {
     expect(snapshot.channelAccountOwners['feishu:default']).toBeUndefined();
     expect(snapshot.channelAccountOwners['telegram:default']).toBe('main');
   });
+
+  it('normalizes stale provider-prefixed model refs to the configured provider key', async () => {
+    await writeOpenClawJson({
+      models: {
+        providers: {
+          'custom-customc5': {
+            baseUrl: 'https://maas-api.cn-huabei-1.xf-yun.com/v2',
+            api: 'openai-completions',
+            models: [
+              { id: 'xopqwen35v35b', name: 'xopqwen35v35b' },
+            ],
+          },
+        },
+      },
+      agents: {
+        list: [
+          { id: 'main', name: 'Main', default: true, model: 'custom-c52f8192/xopqwen35v35b' },
+          { id: 'product', name: '产品运营', model: 'custom-c52f8192/xopqwen35v35b' },
+        ],
+      },
+    });
+
+    const { listAgentsSnapshot } = await import('@electron/utils/agent-config');
+    await listAgentsSnapshot();
+
+    const config = await readOpenClawJson();
+    const agents = ((config.agents as Record<string, unknown>)?.list ?? []) as Array<Record<string, unknown>>;
+    const product = agents.find((entry) => entry.id === 'product');
+    const main = agents.find((entry) => entry.id === 'main');
+
+    expect(product?.model).toBe('custom-customc5/xopqwen35v35b');
+    expect(main?.model).toBe('custom-customc5/xopqwen35v35b');
+  });
 });

@@ -1,8 +1,19 @@
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 
-const LOCK_SCHEMA = 'clawx-instance-lock';
-const LOCK_VERSION = 1;
+const LOCK_SCHEMA = 'shan-instance-lock';
+const LOCK_VERSION = 2;
+const STALE_THRESHOLD_MS = 500;
 
 export interface ProcessInstanceFileLock {
   acquired: boolean;
@@ -29,71 +40,77 @@ function defaultPidAlive(pid: number): boolean {
   }
 }
 
-type ParsedLockOwner =
-  | { kind: 'legacy'; pid: number }
-  | { kind: 'structured'; pid: number }
-  | { kind: 'unknown' };
-
 interface StructuredLockContent {
   schema: string;
   version: number;
   pid: number;
+  sessionId: string;
+  startedAt: number;
 }
 
-function parsePositivePid(raw: string): number | undefined {
-  if (!/^\d+$/.test(raw)) {
-    return undefined;
-  }
-  const parsed = Number.parseInt(raw, 10);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return undefined;
-  }
-  return parsed;
-}
+function parseLockContent(
+  raw: string
+): { pid: number; sessionId?: string; startedAt?: number } | null {
+  const trimmed = raw.trim();
 
-function parseStructuredLockContent(raw: string): StructuredLockContent | undefined {
+  // Try structured JSON first (v2)
   try {
-    const parsed = JSON.parse(raw) as Partial<StructuredLockContent>;
-    if (
-      parsed?.schema === LOCK_SCHEMA
-      && parsed?.version === LOCK_VERSION
-      && typeof parsed?.pid === 'number'
-      && Number.isFinite(parsed.pid)
-      && parsed.pid > 0
-    ) {
-      return {
-        schema: parsed.schema,
-        version: parsed.version,
-        pid: parsed.pid,
-      };
+    const parsed = JSON.parse(trimmed) as Partial<StructuredLockContent>;
+    if (parsed?.schema === LOCK_SCHEMA && typeof parsed?.pid === 'number' && parsed.pid > 0) {
+      return { pid: parsed.pid, sessionId: parsed.sessionId, startedAt: parsed.startedAt };
     }
   } catch {
-    // ignore parse errors
+    // not JSON
   }
-  return undefined;
+
+  // Legacy: bare PID number
+  if (/^\d+$/.test(trimmed)) {
+    const pid = Number.parseInt(trimmed, 10);
+    if (Number.isFinite(pid) && pid > 0) return { pid };
+  }
+
+  return null;
 }
 
-function readLockOwner(lockPath: string): ParsedLockOwner {
+function isLockStale(lockPath: string, isPidAlive: (pid: number) => boolean): boolean {
   try {
-    const raw = readFileSync(lockPath, 'utf8').trim();
-    const legacyPid = parsePositivePid(raw);
-    if (legacyPid !== undefined) {
-      return { kind: 'legacy', pid: legacyPid };
+    const raw = readFileSync(lockPath, 'utf8');
+    const content = parseLockContent(raw);
+
+    if (!content) return true;
+
+    // If PID is dead, lock is definitely stale
+    if (!isPidAlive(content.pid)) return true;
+
+    // PID is alive — but might be reused. Check startedAt if available.
+    if (content.startedAt) {
+      const lockFileAge = Date.now() - content.startedAt;
+      // If the lock claims to have started in the future or > 7 days ago, stale
+      if (lockFileAge < -60_000 || lockFileAge > 7 * 24 * 60 * 60 * 1000) return true;
     }
 
-    const structured = parseStructuredLockContent(raw);
-    if (structured) {
-      return { kind: 'structured', pid: structured.pid };
-    }
+    // Check lock file mtime — if it hasn't been touched in a while and the
+    // process start time doesn't match, it's likely a PID reuse situation.
+    // On macOS, we can cross-check with the file's mtime vs process uptime.
+    const stat = statSync(lockPath);
+    const fileAgeMs = Date.now() - stat.mtimeMs;
+
+    // If file is very fresh (< 500ms), another instance just wrote it — not stale
+    if (fileAgeMs < STALE_THRESHOLD_MS) return false;
+
+    // If we have startedAt and the PID is alive, trust it
+    if (content.startedAt) return false;
+
+    // Legacy lock with alive PID — can't distinguish PID reuse, assume not stale
+    return false;
   } catch {
-    // ignore read errors
+    // Can't read lock → treat as stale
+    return true;
   }
-
-  return { kind: 'unknown' };
 }
 
 export function acquireProcessInstanceFileLock(
-  options: ProcessInstanceFileLockOptions,
+  options: ProcessInstanceFileLockOptions
 ): ProcessInstanceFileLock {
   const pid = options.pid ?? process.pid;
   const isPidAlive = options.isPidAlive ?? defaultPidAlive;
@@ -104,78 +121,67 @@ export function acquireProcessInstanceFileLock(
   let ownerPid: number | undefined;
   let ownerFormat: ProcessInstanceFileLock['ownerFormat'] = 'unknown';
 
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try {
-      const fd = openSync(lockPath, 'wx');
+  // If lock file exists, check staleness first
+  if (existsSync(lockPath)) {
+    if (isLockStale(lockPath, isPidAlive)) {
       try {
-        // Keep writing legacy numeric format for broad backward compatibility.
-        // Parser accepts both legacy numeric and structured JSON formats.
-        writeFileSync(fd, String(pid), 'utf8');
-      } finally {
-        closeSync(fd);
+        rmSync(lockPath, { force: true });
+      } catch {
+        // best-effort
       }
-
-      let released = false;
-      return {
-        acquired: true,
-        lockPath,
-        release: () => {
-          if (released) return;
-          released = true;
-          try {
-            const currentOwner = readLockOwner(lockPath);
-            if (
-              (currentOwner.kind === 'legacy' || currentOwner.kind === 'structured')
-              && currentOwner.pid !== pid
-            ) {
-              return;
-            }
-            if (currentOwner.kind === 'unknown') {
-              return;
-            }
-            rmSync(lockPath, { force: true });
-          } catch {
-            // best-effort
-          }
-        },
-      };
-    } catch (error) {
-      const errno = (error as NodeJS.ErrnoException).code;
-      if (errno !== 'EEXIST') {
-        break;
+    } else {
+      // Lock is held by a live process
+      const raw = readFileSync(lockPath, 'utf8');
+      const content = parseLockContent(raw);
+      if (content) {
+        ownerPid = content.pid;
+        ownerFormat = content.sessionId ? 'structured' : 'legacy';
       }
-
-      const owner = readLockOwner(lockPath);
-      if (owner.kind === 'legacy' || owner.kind === 'structured') {
-        ownerPid = owner.pid;
-        ownerFormat = owner.kind;
-      } else {
-        ownerPid = undefined;
-        ownerFormat = 'unknown';
-      }
-      const shouldTreatAsStale =
-        (owner.kind === 'legacy' || owner.kind === 'structured')
-        && !isPidAlive(owner.pid);
-      if (shouldTreatAsStale && existsSync(lockPath)) {
-        try {
-          rmSync(lockPath, { force: true });
-          continue;
-        } catch {
-          // If deletion fails, treat as held lock.
-        }
-      }
-
-      break;
+      return { acquired: false, lockPath, ownerPid, ownerFormat, release: () => {} };
     }
   }
 
-  return {
-    acquired: false,
-    lockPath,
-    ownerPid,
-    ownerFormat,
-    release: () => {
-      // no-op when lock wasn't acquired
-    },
-  };
+  // Try to create the lock file
+  try {
+    const fd = openSync(lockPath, 'wx');
+    try {
+      const lockContent: StructuredLockContent = {
+        schema: LOCK_SCHEMA,
+        version: LOCK_VERSION,
+        pid,
+        sessionId: randomUUID(),
+        startedAt: Date.now(),
+      };
+      writeFileSync(fd, JSON.stringify(lockContent), 'utf8');
+    } finally {
+      closeSync(fd);
+    }
+
+    let released = false;
+    return {
+      acquired: true,
+      lockPath,
+      release: () => {
+        if (released) return;
+        released = true;
+        try {
+          rmSync(lockPath, { force: true });
+        } catch {
+          // best-effort
+        }
+      },
+    };
+  } catch (error) {
+    const errno = (error as NodeJS.ErrnoException).code;
+    if (errno === 'EEXIST') {
+      // Race: another process created it between our check and open
+      const raw = readFileSync(lockPath, 'utf8').trim();
+      const content = parseLockContent(raw);
+      if (content) {
+        ownerPid = content.pid;
+        ownerFormat = content.sessionId ? 'structured' : 'legacy';
+      }
+    }
+    return { acquired: false, lockPath, ownerPid, ownerFormat, release: () => {} };
+  }
 }

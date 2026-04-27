@@ -14,17 +14,21 @@ import { handleSkillRoutes } from './routes/skills';
 import { handleFileRoutes } from './routes/files';
 import { handleSessionRoutes } from './routes/sessions';
 import { handleCronRoutes } from './routes/cron';
+import { handleMailRoutes } from './routes/mail';
+import { handleSystemCalendarRoutes } from './routes/system-calendar';
+import { handleSystemRoutes } from './routes/system';
 import { sendJson } from './route-utils';
 
 type RouteHandler = (
   req: IncomingMessage,
   res: ServerResponse,
   url: URL,
-  ctx: HostApiContext,
+  ctx: HostApiContext
 ) => Promise<boolean>;
 
 const routeHandlers: RouteHandler[] = [
   handleAppRoutes,
+  handleSystemRoutes,
   handleGatewayRoutes,
   handleSettingsRoutes,
   handleProviderRoutes,
@@ -34,6 +38,8 @@ const routeHandlers: RouteHandler[] = [
   handleFileRoutes,
   handleSessionRoutes,
   handleCronRoutes,
+  handleSystemCalendarRoutes,
+  handleMailRoutes,
   handleLogRoutes,
   handleUsageRoutes,
 ];
@@ -47,7 +53,10 @@ export function startHostApiServer(ctx: HostApiContext, port = PORTS.CLAWX_HOST_
           return;
         }
       }
-      sendJson(res, 404, { success: false, error: `No route for ${req.method} ${requestUrl.pathname}` });
+      sendJson(res, 404, {
+        success: false,
+        error: `No route for ${req.method} ${requestUrl.pathname}`,
+      });
     } catch (error) {
       logger.error('Host API request failed:', error);
       sendJson(res, 500, { success: false, error: String(error) });

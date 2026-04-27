@@ -6,6 +6,8 @@ const listConfiguredChannelAccountsMock = vi.fn();
 const readOpenClawConfigMock = vi.fn();
 const listAgentsSnapshotMock = vi.fn();
 const sendJsonMock = vi.fn();
+const readFileMock = vi.fn();
+const readdirMock = vi.fn();
 
 vi.mock('@electron/utils/channel-config', () => ({
   cleanupDanglingWeChatPluginState: vi.fn(),
@@ -56,9 +58,24 @@ vi.mock('@electron/api/route-utils', () => ({
   sendJson: (...args: unknown[]) => sendJsonMock(...args),
 }));
 
+vi.mock('node:fs/promises', () => ({
+  readFile: (...args: unknown[]) => readFileMock(...args),
+  readdir: (...args: unknown[]) => readdirMock(...args),
+  default: {
+    readFile: (...args: unknown[]) => readFileMock(...args),
+    readdir: (...args: unknown[]) => readdirMock(...args),
+  },
+}));
+
+vi.mock('@electron/utils/paths', () => ({
+  getOpenClawConfigDir: () => '/tmp/openclaw',
+}));
+
 describe('handleChannelRoutes', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    readFileMock.mockResolvedValue('');
+    readdirMock.mockResolvedValue([]);
     listAgentsSnapshotMock.mockResolvedValue({
       agents: [],
       channelAccountOwners: {},
@@ -124,7 +141,7 @@ describe('handleChannelRoutes', () => {
     const handled = await handleChannelRoutes(
       { method: 'GET' } as IncomingMessage,
       {} as ServerResponse,
-      new URL('http://127.0.0.1:3210/api/channels/accounts'),
+      new URL('http://127.0.0.1:3210/api/channels/accounts?force=1'),
       {
         gatewayManager: {
           rpc,
@@ -136,7 +153,7 @@ describe('handleChannelRoutes', () => {
     );
 
     expect(handled).toBe(true);
-    expect(rpc).toHaveBeenCalledWith('channels.status', { probe: true });
+    expect(rpc).toHaveBeenCalledWith('channels.status', { probe: false });
     expect(sendJsonMock).toHaveBeenCalledWith(
       expect.anything(),
       200,
@@ -206,7 +223,7 @@ describe('handleChannelRoutes', () => {
     await handleChannelRoutes(
       { method: 'GET' } as IncomingMessage,
       {} as ServerResponse,
-      new URL('http://127.0.0.1:3210/api/channels/accounts'),
+      new URL('http://127.0.0.1:3210/api/channels/accounts?force=1'),
       {
         gatewayManager: {
           rpc,
@@ -233,6 +250,129 @@ describe('handleChannelRoutes', () => {
           }),
         ],
       }),
+    );
+  });
+
+  it('loads recipient options from openclaw sessions and config json', async () => {
+    readOpenClawConfigMock.mockResolvedValue({
+      channels: {
+        feishu: {
+          accounts: {
+            default: {
+              defaultRecipientId: 'ou_config',
+            },
+          },
+        },
+      },
+    });
+    readdirMock.mockResolvedValue([
+      { isDirectory: () => true, name: 'main' },
+    ]);
+    readFileMock.mockResolvedValue(
+      JSON.stringify({
+        'agent:main:feishu:direct:ou_session': {
+          updatedAt: 1710000000000,
+          origin: {
+            accountId: 'default',
+            to: 'ou_session',
+          },
+        },
+      })
+    );
+
+    const { handleChannelRoutes } = await import('@electron/api/routes/channels');
+    const handled = await handleChannelRoutes(
+      { method: 'GET' } as IncomingMessage,
+      {} as ServerResponse,
+      new URL('http://127.0.0.1:3210/api/channels/recipient-options?channelType=feishu&accountId=default'),
+      {
+        gatewayManager: {
+          rpc: vi.fn(),
+          getStatus: () => ({ state: 'running' }),
+          debouncedReload: vi.fn(),
+          debouncedRestart: vi.fn(),
+        },
+      } as never,
+    );
+
+    expect(handled).toBe(true);
+    expect(sendJsonMock).toHaveBeenCalledWith(
+      expect.anything(),
+      200,
+      {
+        success: true,
+        recipients: ['ou_config', 'ou_session'],
+      },
+    );
+  });
+
+  it('loads pairing requests and filters by account id', async () => {
+    readFileMock.mockResolvedValue(
+      JSON.stringify({
+        version: 1,
+        requests: [
+          {
+            id: 'ou_default_1',
+            code: 'ABCD1234',
+            createdAt: '2026-03-31T09:00:00.000Z',
+            lastSeenAt: '2026-03-31T09:30:00.000Z',
+            meta: {
+              accountId: 'default',
+              userId: 'ou_default_1',
+            },
+          },
+          {
+            id: 'ou_other_1',
+            code: 'WXYZ7890',
+            createdAt: '2026-03-31T10:00:00.000Z',
+            meta: {
+              accountId: 'other',
+            },
+          },
+        ],
+      }),
+    );
+
+    const { handleChannelRoutes } = await import('@electron/api/routes/channels');
+    const handled = await handleChannelRoutes(
+      { method: 'GET' } as IncomingMessage,
+      {} as ServerResponse,
+      new URL('http://127.0.0.1:3210/api/channels/pairing-requests?channelType=feishu&accountId=default'),
+      {
+        gatewayManager: {
+          rpc: vi.fn(),
+          getStatus: () => ({ state: 'running' }),
+          debouncedReload: vi.fn(),
+          debouncedRestart: vi.fn(),
+        },
+      } as never,
+    );
+
+    expect(handled).toBe(true);
+    expect(readFileMock).toHaveBeenCalledWith(
+      '/tmp/openclaw/credentials/feishu-pairing.json',
+      'utf8',
+    );
+    expect(sendJsonMock).toHaveBeenCalledWith(
+      expect.anything(),
+      200,
+      {
+        success: true,
+        requests: [
+          {
+            id: 'ou_default_1',
+            userId: 'ou_default_1',
+            code: 'ABCD1234',
+            createdAt: '2026-03-31T09:00:00.000Z',
+            lastSeenAt: '2026-03-31T09:30:00.000Z',
+            accountId: 'default',
+            meta: {
+              accountId: 'default',
+              userId: 'ou_default_1',
+            },
+          },
+        ],
+      },
     );
   });
 });

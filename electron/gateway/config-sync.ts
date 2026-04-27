@@ -15,7 +15,7 @@ function fsPath(filePath: string): string {
   }
   return `\\\\?\\${windowsPath}`;
 }
-import { getAllSettings } from '../utils/store';
+import { ensureGatewayToken, getAllSettings } from '../utils/store';
 import { getApiKey, getDefaultProvider, getProvider } from '../utils/secure-storage';
 import { getProviderEnvVar, getKeyableProviderTypes } from '../utils/provider-registry';
 import { getOpenClawDir, getOpenClawEntryPath, isOpenClawPresent } from '../utils/paths';
@@ -255,13 +255,15 @@ export async function prepareGatewayLaunchContext(port: number): Promise<Gateway
   }
 
   const appSettings = await getAllSettings();
+  const gatewayToken = await ensureGatewayToken();
+  appSettings.gatewayToken = gatewayToken;
   await syncGatewayConfigBeforeLaunch(appSettings);
 
   if (!existsSync(entryScript)) {
     throw new Error(`OpenClaw entry script not found at: ${entryScript}`);
   }
 
-  const gatewayArgs = ['gateway', '--port', String(port), '--token', appSettings.gatewayToken, '--allow-unconfigured'];
+  const gatewayArgs = ['gateway', '--port', String(port), '--token', gatewayToken, '--allow-unconfigured'];
   const mode = app.isPackaged ? 'packaged' : 'dev';
 
   const platform = process.platform;
@@ -291,7 +293,7 @@ export async function prepareGatewayLaunchContext(port: number): Promise<Gateway
     ...providerEnv,
     ...uvEnv,
     ...proxyEnv,
-    OPENCLAW_GATEWAY_TOKEN: appSettings.gatewayToken,
+    OPENCLAW_GATEWAY_TOKEN: gatewayToken,
     OPENCLAW_SKIP_CHANNELS: skipChannels ? '1' : '',
     CLAWDBOT_SKIP_CHANNELS: skipChannels ? '1' : '',
     OPENCLAW_NO_RESPAWN: '1',

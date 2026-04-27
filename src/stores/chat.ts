@@ -120,6 +120,7 @@ function isDuplicateChatEvent(eventState: string, event: Record<string, unknown>
 // available after the RPC returns, but history may load before that).
 const IMAGE_CACHE_KEY = 'clawx:image-cache';
 const IMAGE_CACHE_MAX = 100; // max entries to prevent unbounded growth
+const SESSION_CUSTOM_LABELS_KEY = 'clawx:session-custom-labels';
 
 function loadImageCache(): Map<string, AttachedFileMeta> {
   try {
@@ -145,6 +146,28 @@ function saveImageCache(cache: Map<string, AttachedFileMeta>): void {
 
 const _imageCache = loadImageCache();
 
+function loadSessionCustomLabels(): Record<string, string> {
+  try {
+    const raw = localStorage.getItem(SESSION_CUSTOM_LABELS_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const entries = Object.entries(parsed).filter(
+      (entry): entry is [string, string] => typeof entry[1] === 'string' && entry[1].trim().length > 0,
+    );
+    return Object.fromEntries(entries);
+  } catch {
+    return {};
+  }
+}
+
+function saveSessionCustomLabels(labels: Record<string, string>): void {
+  try {
+    localStorage.setItem(SESSION_CUSTOM_LABELS_KEY, JSON.stringify(labels));
+  } catch {
+    // ignore storage errors
+  }
+}
+
 /** Extract plain text from message content (string or content blocks) */
 function getMessageText(content: unknown): string {
   if (typeof content === 'string') return content;
@@ -155,6 +178,41 @@ function getMessageText(content: unknown): string {
       .join('\n');
   }
   return '';
+}
+
+function normalizeComparableMessageText(value: string): string {
+  return value.trim().replace(/\s+/g, ' ');
+}
+
+function isLikelyDuplicateNeighbor(prev: RawMessage | undefined, next: RawMessage): boolean {
+  if (!prev) return false;
+
+  // Exact same id means exact same message.
+  if (prev.id && next.id && prev.id === next.id) return true;
+
+  if (prev.role !== next.role) return false;
+
+  const prevText = normalizeComparableMessageText(getMessageText(prev.content));
+  const nextText = normalizeComparableMessageText(getMessageText(next.content));
+  if (!prevText || !nextText || prevText !== nextText) return false;
+
+  // Only collapse adjacent duplicates for assistant output, or when timestamps match.
+  if (prev.role === 'assistant') return true;
+
+  if (prev.timestamp && next.timestamp) {
+    return Math.abs(toMs(prev.timestamp) - toMs(next.timestamp)) < 1_000;
+  }
+  return false;
+}
+
+function dedupeNeighborMessages(messages: RawMessage[]): RawMessage[] {
+  const deduped: RawMessage[] = [];
+  for (const message of messages) {
+    const previous = deduped[deduped.length - 1];
+    if (isLikelyDuplicateNeighbor(previous, message)) continue;
+    deduped.push(message);
+  }
+  return deduped;
 }
 
 /** Extract media file refs from [media attached: <path> (<mime>) | ...] patterns */
@@ -677,10 +735,14 @@ function clearSessionEntryFromMap<T extends Record<string, unknown>>(entries: T,
   return Object.fromEntries(Object.entries(entries).filter(([key]) => key !== sessionKey)) as T;
 }
 
+function clearSessionLabelEntry(entries: Record<string, string>, sessionKey: string): Record<string, string> {
+  return Object.fromEntries(Object.entries(entries).filter(([key]) => key !== sessionKey));
+}
+
 function buildSessionSwitchPatch(
   state: Pick<
     ChatState,
-    'currentSessionKey' | 'messages' | 'sessions' | 'sessionLabels' | 'sessionLastActivity'
+    'currentSessionKey' | 'messages' | 'sessions' | 'sessionLabels' | 'sessionCustomLabels' | 'sessionLastActivity'
   >,
   nextSessionKey: string,
 ): Partial<ChatState> {
@@ -690,7 +752,8 @@ function buildSessionSwitchPatch(
   const leavingEmpty = !state.currentSessionKey.endsWith(':main')
     && state.messages.length === 0
     && !state.sessionLastActivity[state.currentSessionKey]
-    && !state.sessionLabels[state.currentSessionKey];
+    && !state.sessionLabels[state.currentSessionKey]
+    && !state.sessionCustomLabels[state.currentSessionKey];
 
   const nextSessions = leavingEmpty
     ? state.sessions.filter((session) => session.key !== state.currentSessionKey)
@@ -703,6 +766,9 @@ function buildSessionSwitchPatch(
     sessionLabels: leavingEmpty
       ? clearSessionEntryFromMap(state.sessionLabels, state.currentSessionKey)
       : state.sessionLabels,
+    sessionCustomLabels: leavingEmpty
+      ? clearSessionLabelEntry(state.sessionCustomLabels, state.currentSessionKey)
+      : state.sessionCustomLabels,
     sessionLastActivity: leavingEmpty
       ? clearSessionEntryFromMap(state.sessionLastActivity, state.currentSessionKey)
       : state.sessionLastActivity,
@@ -993,6 +1059,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   currentSessionKey: DEFAULT_SESSION_KEY,
   currentAgentId: 'main',
   sessionLabels: {},
+  sessionCustomLabels: loadSessionCustomLabels(),
   sessionLastActivity: {},
 
   showThinking: true,
@@ -1104,7 +1171,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                   const lastMsg = msgs[msgs.length - 1];
                   set((s) => {
                     const next: Partial<typeof s> = {};
-                    if (firstUser) {
+                    if (firstUser && !s.sessionCustomLabels[session.key]) {
                       const labelText = getMessageText(firstUser.content).trim();
                       if (labelText) {
                         const truncated = labelText.length > 50 ? `${labelText.slice(0, 50)}…` : labelText;
@@ -1145,6 +1212,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
     get().loadHistory();
   },
 
+  renameSession: (key: string, label: string) => {
+    const trimmed = label.trim();
+    if (!key || !trimmed) return;
+    set((state) => {
+      const nextSessionCustomLabels = { ...state.sessionCustomLabels, [key]: trimmed };
+      saveSessionCustomLabels(nextSessionCustomLabels);
+      return { sessionCustomLabels: nextSessionCustomLabels };
+    });
+  },
+
   // ── Delete session ──
   //
   // NOTE: The OpenClaw Gateway does NOT expose a sessions.delete (or equivalent)
@@ -1181,7 +1258,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const next = remaining[0];
       set((s) => ({
         sessions: remaining,
-        sessionLabels: Object.fromEntries(Object.entries(s.sessionLabels).filter(([k]) => k !== key)),
+        sessionLabels: clearSessionLabelEntry(s.sessionLabels, key),
+        sessionCustomLabels: (() => {
+          const nextSessionCustomLabels = clearSessionLabelEntry(s.sessionCustomLabels, key);
+          saveSessionCustomLabels(nextSessionCustomLabels);
+          return nextSessionCustomLabels;
+        })(),
         sessionLastActivity: Object.fromEntries(Object.entries(s.sessionLastActivity).filter(([k]) => k !== key)),
         messages: [],
         streamingText: '',
@@ -1201,7 +1283,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
     } else {
       set((s) => ({
         sessions: remaining,
-        sessionLabels: Object.fromEntries(Object.entries(s.sessionLabels).filter(([k]) => k !== key)),
+        sessionLabels: clearSessionLabelEntry(s.sessionLabels, key),
+        sessionCustomLabels: (() => {
+          const nextSessionCustomLabels = clearSessionLabelEntry(s.sessionCustomLabels, key);
+          saveSessionCustomLabels(nextSessionCustomLabels);
+          return nextSessionCustomLabels;
+        })(),
         sessionLastActivity: Object.fromEntries(Object.entries(s.sessionLastActivity).filter(([k]) => k !== key)),
       }));
     }
@@ -1214,12 +1301,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // NOTE: We intentionally do NOT call sessions.reset on the old session.
     // sessions.reset archives (renames) the session JSONL file, making old
     // conversation history inaccessible when the user switches back to it.
-    const { currentSessionKey, messages, sessions, sessionLastActivity, sessionLabels } = get();
+    const { currentSessionKey, messages, sessions, sessionLastActivity, sessionLabels, sessionCustomLabels } = get();
     // 仅将没有任何历史记录且无活动时间的会话视为空会话
     const leavingEmpty = !currentSessionKey.endsWith(':main')
       && messages.length === 0
       && !sessionLastActivity[currentSessionKey]
-      && !sessionLabels[currentSessionKey];
+      && !sessionLabels[currentSessionKey]
+      && !sessionCustomLabels[currentSessionKey];
     const prefix = getCanonicalPrefixFromSessionKey(currentSessionKey)
       ?? getCanonicalPrefixFromSessions(sessions)
       ?? DEFAULT_CANONICAL_PREFIX;
@@ -1235,6 +1323,55 @@ export const useChatStore = create<ChatState>((set, get) => ({
       sessionLabels: leavingEmpty
         ? Object.fromEntries(Object.entries(s.sessionLabels).filter(([k]) => k !== currentSessionKey))
         : s.sessionLabels,
+      sessionCustomLabels: leavingEmpty
+        ? (() => {
+          const nextSessionCustomLabels = clearSessionLabelEntry(s.sessionCustomLabels, currentSessionKey);
+          saveSessionCustomLabels(nextSessionCustomLabels);
+          return nextSessionCustomLabels;
+        })()
+        : s.sessionCustomLabels,
+      sessionLastActivity: leavingEmpty
+        ? Object.fromEntries(Object.entries(s.sessionLastActivity).filter(([k]) => k !== currentSessionKey))
+        : s.sessionLastActivity,
+      messages: [],
+      streamingText: '',
+      streamingMessage: null,
+      streamingTools: [],
+      activeRunId: null,
+      error: null,
+      pendingFinal: false,
+      lastUserMessageAt: null,
+      pendingToolImages: [],
+    }));
+  },
+
+  newSessionForAgent: (agentId: string) => {
+    const { currentSessionKey, messages, sessionLastActivity, sessionLabels, sessionCustomLabels } = get();
+    const leavingEmpty = !currentSessionKey.endsWith(':main')
+      && messages.length === 0
+      && !sessionLastActivity[currentSessionKey]
+      && !sessionLabels[currentSessionKey]
+      && !sessionCustomLabels[currentSessionKey];
+    const prefix = `agent:${normalizeAgentId(agentId)}`;
+    const newKey = `${prefix}:session-${Date.now()}`;
+    const newSessionEntry: ChatSession = { key: newKey, displayName: newKey };
+    set((s) => ({
+      currentSessionKey: newKey,
+      currentAgentId: getAgentIdFromSessionKey(newKey),
+      sessions: [
+        ...(leavingEmpty ? s.sessions.filter((sess) => sess.key !== currentSessionKey) : s.sessions),
+        newSessionEntry,
+      ],
+      sessionLabels: leavingEmpty
+        ? Object.fromEntries(Object.entries(s.sessionLabels).filter(([k]) => k !== currentSessionKey))
+        : s.sessionLabels,
+      sessionCustomLabels: leavingEmpty
+        ? (() => {
+          const nextSessionCustomLabels = clearSessionLabelEntry(s.sessionCustomLabels, currentSessionKey);
+          saveSessionCustomLabels(nextSessionCustomLabels);
+          return nextSessionCustomLabels;
+        })()
+        : s.sessionCustomLabels,
       sessionLastActivity: leavingEmpty
         ? Object.fromEntries(Object.entries(s.sessionLastActivity).filter(([k]) => k !== currentSessionKey))
         : s.sessionLastActivity,
@@ -1253,7 +1390,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   // ── Cleanup empty session on navigate away ──
 
   cleanupEmptySession: () => {
-    const { currentSessionKey, messages, sessionLastActivity, sessionLabels } = get();
+    const { currentSessionKey, messages, sessionLastActivity, sessionLabels, sessionCustomLabels } = get();
     // Only remove non-main sessions that were never used (no messages sent).
     // This mirrors the "leavingEmpty" logic in switchSession so that creating
     // a new session and immediately navigating away doesn't leave a ghost entry
@@ -1263,13 +1400,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const isEmptyNonMain = !currentSessionKey.endsWith(':main')
       && messages.length === 0
       && !sessionLastActivity[currentSessionKey]
-      && !sessionLabels[currentSessionKey];
+      && !sessionLabels[currentSessionKey]
+      && !sessionCustomLabels[currentSessionKey];
     if (!isEmptyNonMain) return;
     set((s) => ({
       sessions: s.sessions.filter((sess) => sess.key !== currentSessionKey),
       sessionLabels: Object.fromEntries(
         Object.entries(s.sessionLabels).filter(([k]) => k !== currentSessionKey),
       ),
+      sessionCustomLabels: (() => {
+        const nextSessionCustomLabels = clearSessionLabelEntry(s.sessionCustomLabels, currentSessionKey);
+        saveSessionCustomLabels(nextSessionCustomLabels);
+        return nextSessionCustomLabels;
+      })(),
       sessionLastActivity: Object.fromEntries(
         Object.entries(s.sessionLastActivity).filter(([k]) => k !== currentSessionKey),
       ),
@@ -1307,7 +1450,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const messagesWithToolImages = enrichWithToolResultFiles(rawMessages);
       const filteredMessages = messagesWithToolImages.filter((msg) => !isToolResultRole(msg.role));
       // Restore file attachments for user/assistant messages (from cache + text patterns)
-      const enrichedMessages = enrichWithCachedImages(filteredMessages);
+      const enrichedMessages = dedupeNeighborMessages(enrichWithCachedImages(filteredMessages));
 
       // Preserve the optimistic user message during an active send.
       // The Gateway may not include the user's message in chat.history
@@ -1338,7 +1481,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const isMainSession = currentSessionKey.endsWith(':main');
       if (!isMainSession) {
         const firstUserMsg = finalMessages.find((m) => m.role === 'user');
-        if (firstUserMsg) {
+        if (firstUserMsg && !get().sessionCustomLabels[currentSessionKey]) {
           const labelText = getMessageText(firstUserMsg.content).trim();
           if (labelText) {
             const truncated = labelText.length > 50 ? `${labelText.slice(0, 50)}…` : labelText;
@@ -1504,9 +1647,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }));
 
     // Update session label with first user message text as soon as it's sent
-    const { sessionLabels, messages } = get();
+    const { sessionLabels, sessionCustomLabels, messages } = get();
     const isFirstMessage = !messages.slice(0, -1).some((m) => m.role === 'user');
-    if (!currentSessionKey.endsWith(':main') && isFirstMessage && !sessionLabels[currentSessionKey] && trimmed) {
+    if (
+      !currentSessionKey.endsWith(':main')
+      && isFirstMessage
+      && !sessionLabels[currentSessionKey]
+      && !sessionCustomLabels[currentSessionKey]
+      && trimmed
+    ) {
       const truncated = trimmed.length > 50 ? `${trimmed.slice(0, 50)}…` : trimmed;
       set((s) => ({ sessionLabels: { ...s.sessionLabels, [currentSessionKey]: truncated } }));
     }

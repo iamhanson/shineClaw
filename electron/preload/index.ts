@@ -49,6 +49,7 @@ const electronAPI = {
         'window:maximize',
         'window:close',
         'window:isMaximized',
+        'floating:setPosition',
         // Settings
         'settings:get',
         'settings:set',
@@ -178,6 +179,10 @@ const electronAPI = {
         'oauth:success',
         'oauth:error',
         'openclaw:cli-installed',
+        'boot:gate-required',
+        'dep:progress',
+        'dep:status-changed',
+        'dep:snapshot',
       ];
 
       if (validChannels.includes(channel)) {

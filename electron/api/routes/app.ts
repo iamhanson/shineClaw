@@ -32,6 +32,21 @@ export async function handleAppRoutes(
     return true;
   }
 
+  if (url.pathname === '/api/app/show-main-window' && req.method === 'POST') {
+    const window = ctx.mainWindow;
+    if (!window || window.isDestroyed()) {
+      sendJson(res, 200, { success: false, error: 'Main window is unavailable' });
+      return true;
+    }
+    if (window.isMinimized()) {
+      window.restore();
+    }
+    window.show();
+    window.focus();
+    sendJson(res, 200, { success: true });
+    return true;
+  }
+
   if (req.method === 'OPTIONS') {
     sendNoContent(res);
     return true;

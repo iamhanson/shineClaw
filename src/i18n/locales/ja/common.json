@@ -2,7 +2,8 @@
     "sidebar": {
         "chat": "チャット",
         "newChat": "新しいチャット",
-        "cronTasks": "定期タスク",
+        "cronTasks": "タスク管理",
+        "calendar": "カレンダー",
         "skills": "スキル",
         "agents": "Agents",
         "channels": "チャンネル",
@@ -11,7 +12,9 @@
         "devConsole": "開発者コンソール",
         "models": "モデル",
         "deleteSessionConfirm": "セッション \"{{label}}\" を削除してもよろしいですか？",
-        "openClawPage": "OpenClaw ページ"
+        "renameSession": "セッション名を変更",
+        "openClawPage": "WebUI",
+        "mailAssistant": "メールアシスタント"
     },
     "actions": {
         "save": "保存",

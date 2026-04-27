@@ -25,9 +25,11 @@ export interface AppSettings {
   // General
   theme: 'light' | 'dark' | 'system';
   language: string;
+  personaPrompt: string;
   startMinimized: boolean;
   launchAtStartup: boolean;
   telemetryEnabled: boolean;
+  floatingBallEnabled: boolean;
   machineId: string;
   hasReportedInstall: boolean;
 
@@ -76,9 +78,11 @@ function createDefaultSettings(): AppSettings {
     // General
     theme: 'system',
     language: resolveSupportedLanguage(getSystemLocale()),
+    personaPrompt: '',
     startMinimized: false,
     launchAtStartup: false,
     telemetryEnabled: true,
+    floatingBallEnabled: true,
     machineId: '',
     hasReportedInstall: false,
 
@@ -149,6 +153,18 @@ export async function setSetting<K extends keyof AppSettings>(
 export async function getAllSettings(): Promise<AppSettings> {
   const store = await getSettingsStore();
   return store.store;
+}
+
+export async function ensureGatewayToken(): Promise<string> {
+  const store = await getSettingsStore();
+  const current = store.get('gatewayToken');
+  if (typeof current === 'string' && current.trim().length > 0) {
+    return current;
+  }
+
+  const next = generateToken();
+  store.set('gatewayToken', next);
+  return next;
 }
 
 /**

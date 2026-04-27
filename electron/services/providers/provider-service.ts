@@ -1,7 +1,4 @@
-import {
-  PROVIDER_DEFINITIONS,
-  getProviderDefinition,
-} from '../../shared/providers/registry';
+import { PROVIDER_DEFINITIONS, getProviderDefinition } from '../../shared/providers/registry';
 import type {
   ProviderAccount,
   ProviderConfig,
@@ -49,7 +46,7 @@ function logLegacyProviderApiUsage(method: string, replacement: string): void {
   }
   legacyProviderApiWarned.add(method);
   logger.warn(
-    `[provider-migration] Legacy provider API "${method}" is deprecated. Migrate to "${replacement}".`,
+    `[provider-migration] Legacy provider API "${method}" is deprecated. Migrate to "${replacement}".`
   );
 }
 
@@ -92,41 +89,91 @@ export class ProviderService {
       if (processedKeys.has(key)) continue;
       processedKeys.add(key);
 
+      const entry = openClawProviders[key];
       const storeGroup = storeByKey.get(key) ?? [];
 
       if (storeGroup.length > 0) {
-        // Pick the best store account for this key:
-        // 1. Prefer alias variants (e.g. minimax-portal-cn over minimax-portal)
-        // 2. Among equal variants, prefer the most recently updated
+        // Pick the best store account for this key
         const aliasAccounts = storeGroup.filter((a) => a.vendorId !== key);
         const candidates = aliasAccounts.length > 0 ? aliasAccounts : storeGroup;
         candidates.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-        result.push(candidates[0]);
+        const account = candidates[0];
+
+        // Always refresh key fields from openclaw.json so manual edits take effect
+        if (entry) {
+          let dirty = false;
+          const entryBaseUrl = typeof entry.baseUrl === 'string' ? entry.baseUrl : undefined;
+          if (entryBaseUrl && account.baseUrl !== entryBaseUrl) {
+            account.baseUrl = entryBaseUrl;
+            dirty = true;
+          }
+          const entryApi =
+            typeof entry.api === 'string'
+              ? (entry.api as ProviderAccount['apiProtocol'])
+              : undefined;
+          if (entryApi && account.apiProtocol !== entryApi) {
+            account.apiProtocol = entryApi;
+            dirty = true;
+          }
+          if (Array.isArray(entry.models) && entry.models.length > 0) {
+            const firstModel = entry.models[0] as Record<string, unknown> | undefined;
+            const entryModelId = typeof firstModel?.id === 'string' ? firstModel.id : undefined;
+            if (entryModelId && account.model !== entryModelId) {
+              account.model = entryModelId;
+              dirty = true;
+            }
+            const entryContextWindow =
+              typeof firstModel?.contextWindow === 'number' ? firstModel.contextWindow : undefined;
+            if (entryContextWindow && account.contextWindow !== entryContextWindow) {
+              account.contextWindow = entryContextWindow;
+              dirty = true;
+            }
+            const entryMaxTokens =
+              typeof firstModel?.maxTokens === 'number' ? firstModel.maxTokens : undefined;
+            if (entryMaxTokens && account.maxTokens !== entryMaxTokens) {
+              account.maxTokens = entryMaxTokens;
+              dirty = true;
+            }
+          }
+          if (dirty) {
+            account.updatedAt = new Date().toISOString();
+            await saveProviderAccount(account);
+          }
+          // Do NOT import models.providers[*].apiKey from openclaw.json into keychain.
+          // In OpenClaw this field is frequently an env var reference (or oauth token
+          // marker), not a raw credential.
+        }
+
+        result.push(account);
 
         // Clean up orphaned duplicates from the store.
-        const kept = candidates[0];
-        for (const account of storeGroup) {
-          if (account.id !== kept.id) {
+        for (const other of storeGroup) {
+          if (other.id !== account.id) {
             logger.info(
-              `[provider-sync] Removing orphaned account "${account.id}" for key "${key}" (keeping "${kept.id}")`,
+              `[provider-sync] Removing orphaned account "${other.id}" for key "${key}" (keeping "${account.id}")`
             );
-            await deleteProviderAccount(account.id);
+            await deleteProviderAccount(other.id);
           }
         }
       } else {
         // No store account for this key — create a seed from openclaw.json.
-        const entry = openClawProviders[key];
         if (entry) {
           const seeded = ProviderService.buildAccountsFromOpenClawEntries(
             { [key]: entry },
             new Set(),
             new Set(),
-            defaultModel,
+            defaultModel
           );
           for (const account of seeded) {
             await saveProviderAccount(account);
             result.push(account);
-            logger.info(`[provider-sync] Seeded provider account "${account.id}" from openclaw.json`);
+            logger.info(
+              `[provider-sync] Seeded provider account "${account.id}" from openclaw.json`
+            );
+
+            // Do NOT import models.providers[*].apiKey from openclaw.json into keychain.
+            // In OpenClaw this field is frequently an env var reference (or oauth token
+            // marker), not a raw credential.
           }
         }
       }
@@ -134,8 +181,6 @@ export class ProviderService {
 
     return result;
   }
-
-
 
   /**
    * Build ProviderAccount objects from OpenClaw config entries, skipping any
@@ -145,7 +190,7 @@ export class ProviderService {
     providers: Record<string, Record<string, unknown>>,
     existingIds: Set<string>,
     existingVendorIds: Set<string>,
-    defaultModel: string | undefined,
+    defaultModel: string | undefined
   ): ProviderAccount[] {
     const defaultModelProvider = defaultModel?.includes('/')
       ? defaultModel.split('/')[0]
@@ -172,27 +217,50 @@ export class ProviderService {
         continue;
       }
 
-      const baseUrl = typeof entry.baseUrl === 'string' ? entry.baseUrl : definition?.providerConfig?.baseUrl;
+      const baseUrl =
+        typeof entry.baseUrl === 'string' ? entry.baseUrl : definition?.providerConfig?.baseUrl;
 
       // Infer model from the default model if it belongs to this provider
       let model: string | undefined;
+      let contextWindow: number | undefined;
+      let maxTokens: number | undefined;
       if (defaultModelProvider === key && defaultModel) {
         model = defaultModel;
       } else if (definition?.defaultModelId) {
         model = definition.defaultModelId;
+      } else if (Array.isArray(entry.models) && entry.models.length > 0) {
+        // Fallback: pick the first model from openclaw.json entry
+        const firstModel = entry.models[0] as Record<string, unknown> | undefined;
+        if (firstModel && typeof firstModel.id === 'string') {
+          model = firstModel.id;
+        }
+        if (typeof firstModel?.contextWindow === 'number') {
+          contextWindow = firstModel.contextWindow;
+        }
+        if (typeof firstModel?.maxTokens === 'number') {
+          maxTokens = firstModel.maxTokens;
+        }
       }
+
+      // Infer apiProtocol from openclaw.json entry if not available from registry
+      const apiProtocol =
+        definition?.providerConfig?.api ??
+        (typeof entry.api === 'string' ? (entry.api as ProviderAccount['apiProtocol']) : undefined);
 
       const account: ProviderAccount = {
         id: key,
-        vendorId: (vendorId as ProviderAccount['vendorId'] as ProviderType),
+        vendorId: vendorId as ProviderAccount['vendorId'] as ProviderType,
         label: definition?.name ?? key.charAt(0).toUpperCase() + key.slice(1),
         authMode: definition?.defaultAuthMode ?? 'api_key',
         baseUrl,
-        apiProtocol: definition?.providerConfig?.api,
-        headers: (entry.headers && typeof entry.headers === 'object'
-          ? (entry.headers as Record<string, string>)
-          : undefined),
+        apiProtocol,
+        headers:
+          entry.headers && typeof entry.headers === 'object'
+            ? (entry.headers as Record<string, string>)
+            : undefined,
         model,
+        contextWindow,
+        maxTokens,
         enabled: true,
         isDefault: false,
         createdAt: now,
@@ -212,7 +280,31 @@ export class ProviderService {
 
   async getDefaultAccountId(): Promise<string | undefined> {
     await ensureProviderStoreMigrated();
-    return getDefaultProviderAccountId();
+    const storeDefault = await getDefaultProviderAccountId();
+    if (storeDefault) {
+      const storeDefaultAccount = await getProviderAccount(storeDefault);
+      if (storeDefaultAccount) return storeDefault;
+    }
+
+    // Fallback: derive from openclaw.json agents.defaults.model.primary
+    try {
+      const { defaultModel } = await getOpenClawProvidersConfig();
+      if (defaultModel?.includes('/')) {
+        const providerKey = defaultModel.split('/')[0];
+        const accounts = await this.listAccounts();
+        const matched = accounts.find(
+          (account) =>
+            account.id === providerKey
+            || getOpenClawProviderKeyForType(account.vendorId, account.id) === providerKey
+        );
+        if (matched) {
+          return matched.id;
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return undefined;
   }
 
   async createAccount(account: ProviderAccount, apiKey?: string): Promise<ProviderAccount> {
@@ -229,7 +321,7 @@ export class ProviderService {
   async updateAccount(
     accountId: string,
     patch: Partial<ProviderAccount>,
-    apiKey?: string,
+    apiKey?: string
   ): Promise<ProviderAccount> {
     await ensureProviderStoreMigrated();
     const existing = await getProviderAccount(accountId);

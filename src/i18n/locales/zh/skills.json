@@ -106,6 +106,7 @@
         "searching": "正在搜索 ClawHub...",
         "noResults": "未找到匹配的技能。",
         "emptyPrompt": "搜索新技能以扩展您的能力。",
-        "searchError": "ClawHub 搜索失败。请检查您的连接或安装。"
+        "searchError": "ClawHub 搜索失败。请检查您的连接或安装。",
+        "sourceTencent": "腾讯 Hub"
     }
 }

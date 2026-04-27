@@ -1,4 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'http';
+import { readFile, readdir } from 'node:fs/promises';
+import { join } from 'node:path';
 import {
   deleteChannelAccountConfig,
   deleteChannelConfig,
@@ -45,11 +47,256 @@ import {
   waitForWeChatLoginSession,
 } from '../../utils/wechat-login';
 import { whatsAppLoginManager } from '../../utils/whatsapp-login';
+import { getOpenClawConfigDir } from '../../utils/paths';
 import type { HostApiContext } from '../context';
 import { parseJsonBody, sendJson } from '../route-utils';
 
 const WECHAT_QR_TIMEOUT_MS = 8 * 60 * 1000;
 const activeQrLogins = new Map<string, string>();
+
+function normalizeString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+interface ChannelPairingRequestView {
+  id: string;
+  userId: string;
+  code: string;
+  createdAt: string;
+  lastSeenAt?: string;
+  accountId?: string;
+  meta?: Record<string, string>;
+}
+
+function stripThreadSuffixFromSessionKey(sessionKey: string): string {
+  const idx = sessionKey.toLowerCase().lastIndexOf(':thread:');
+  if (idx <= 0) return sessionKey;
+  const parentKey = sessionKey.slice(0, idx).trim();
+  return parentKey || sessionKey;
+}
+
+function parseAgentSessionKey(sessionKey: string): { rest: string } | null {
+  if (!sessionKey.startsWith('agent:')) return null;
+  const parts = sessionKey.split(':');
+  if (parts.length < 3) return null;
+  const rest = parts.slice(2).join(':').trim();
+  if (!rest) return null;
+  return { rest };
+}
+
+function inferDeliveryFromSessionKey(sessionKey: string): { channel?: string; to: string } | null {
+  const parsed = parseAgentSessionKey(stripThreadSuffixFromSessionKey(sessionKey));
+  if (!parsed?.rest) return null;
+
+  const parts = parsed.rest.split(':').filter(Boolean);
+  if (parts.length === 0) return null;
+
+  const head = parts[0]?.trim().toLowerCase();
+  if (!head || head === 'main' || head === 'subagent' || head === 'acp' || head === 'cron') {
+    return null;
+  }
+
+  const markerIndex = parts.findIndex(
+    (part) => part === 'direct' || part === 'dm' || part === 'group' || part === 'channel',
+  );
+  if (markerIndex === -1) return null;
+
+  const to = parts.slice(markerIndex + 1).join(':').trim();
+  if (!to) return null;
+
+  return {
+    channel: parts[0]?.trim().toLowerCase() || undefined,
+    to,
+  };
+}
+
+type SessionStoreCandidate = { sessionKey: string; entry: Record<string, unknown> };
+
+async function readSessionStoreEntries(agentId: string): Promise<SessionStoreCandidate[]> {
+  const storePath = join(getOpenClawConfigDir(), 'agents', agentId, 'sessions', 'sessions.json');
+  const raw = await readFile(storePath, 'utf8').catch(() => '');
+  if (!raw.trim()) return [];
+
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const candidates = new Map<string, Record<string, unknown>>();
+
+    for (const [sessionKey, value] of Object.entries(parsed)) {
+      if (sessionKey === 'sessions' || !isRecord(value)) continue;
+      candidates.set(sessionKey, value);
+    }
+
+    const sessions = parsed.sessions;
+    if (Array.isArray(sessions)) {
+      for (const item of sessions) {
+        if (!isRecord(item)) continue;
+        const sessionKey = normalizeString(item.key) || normalizeString(item.sessionKey);
+        if (!sessionKey) continue;
+        candidates.set(sessionKey, item);
+      }
+    }
+
+    return Array.from(candidates.entries()).map(([sessionKey, entry]) => ({ sessionKey, entry }));
+  } catch {
+    return [];
+  }
+}
+
+async function listRecipientCandidatesFromOpenClaw(params: {
+  channelType: string;
+  accountId?: string;
+  limit?: number;
+}): Promise<string[]> {
+  const storedChannelType = resolveStoredChannelType(params.channelType);
+  const targetAccountId = normalizeString(params.accountId);
+  const maxItems = Math.max(1, Math.min(params.limit ?? 50, 200));
+  const scored = new Map<string, number>();
+
+  const openClawConfig = await readOpenClawConfig().catch(() => ({ channels: {} as Record<string, unknown> }));
+  const channelSection = (openClawConfig.channels?.[storedChannelType] as Record<string, unknown> | undefined) ?? undefined;
+  const accounts = (channelSection?.accounts as Record<string, Record<string, unknown>> | undefined) ?? undefined;
+  if (accounts) {
+    const accountEntries: Array<[string, Record<string, unknown>]> = [];
+    if (targetAccountId) {
+      const matched = accounts[targetAccountId];
+      if (matched) {
+        accountEntries.push([targetAccountId, matched]);
+      }
+    } else {
+      accountEntries.push(...Object.entries(accounts));
+    }
+    for (const [, accountCfg] of accountEntries) {
+      const fromConfig =
+        normalizeString(accountCfg.defaultRecipientId)
+        || normalizeString(accountCfg.deliveryTo)
+        || normalizeString(accountCfg.to);
+      if (fromConfig) scored.set(fromConfig, Number.MAX_SAFE_INTEGER);
+    }
+  }
+
+  const agentsDir = join(getOpenClawConfigDir(), 'agents');
+  const agentDirs = await readdir(agentsDir, { withFileTypes: true }).catch(() => []);
+  for (const dirent of agentDirs) {
+    if (!dirent.isDirectory()) continue;
+    const sessionEntries = await readSessionStoreEntries(dirent.name);
+    for (const candidate of sessionEntries) {
+      const normalizedSessionKey = stripThreadSuffixFromSessionKey(candidate.sessionKey);
+      const route = inferDeliveryFromSessionKey(normalizedSessionKey);
+      if (!route?.channel || route.channel !== storedChannelType) continue;
+
+      const origin = isRecord(candidate.entry.origin) ? candidate.entry.origin : undefined;
+      const accountId = normalizeString(origin?.accountId) || normalizeString(candidate.entry.lastAccountId);
+      if (targetAccountId && accountId !== targetAccountId) continue;
+
+      const to = normalizeString(origin?.to) || route.to;
+      if (!to) continue;
+
+      const updatedAtRaw = candidate.entry.updatedAt;
+      let updatedAt = 0;
+      if (typeof updatedAtRaw === 'number' && Number.isFinite(updatedAtRaw)) {
+        updatedAt = updatedAtRaw < 1e12 ? updatedAtRaw * 1000 : updatedAtRaw;
+      } else if (typeof updatedAtRaw === 'string') {
+        const parsed = Date.parse(updatedAtRaw);
+        if (Number.isFinite(parsed)) updatedAt = parsed;
+      }
+
+      scored.set(to, Math.max(scored.get(to) ?? 0, updatedAt));
+    }
+  }
+
+  return Array.from(scored.entries())
+    .sort((left, right) => {
+      if (right[1] !== left[1]) return right[1] - left[1];
+      return left[0].localeCompare(right[0]);
+    })
+    .slice(0, maxItems)
+    .map(([recipientId]) => recipientId);
+}
+
+function normalizePairingMeta(meta: unknown): Record<string, string> | undefined {
+  if (!isRecord(meta)) return undefined;
+  const entries = Object.entries(meta)
+    .map(([key, value]) => [key, normalizeString(value)] as const)
+    .filter(([, value]) => Boolean(value)) as Array<[string, string]>;
+  if (entries.length === 0) return undefined;
+  return Object.fromEntries(entries);
+}
+
+function resolvePairingUserId(id: string, meta?: Record<string, string>): string {
+  const fromMeta =
+    meta?.userId
+    || meta?.user_id
+    || meta?.openId
+    || meta?.open_id
+    || meta?.unionId
+    || meta?.union_id
+    || meta?.senderId
+    || meta?.sender_id;
+  return normalizeString(fromMeta) || id;
+}
+
+function resolveTimestamp(value: string | undefined): number {
+  if (!value) return 0;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+async function listChannelPairingRequestsFromOpenClaw(params: {
+  channelType: string;
+  accountId?: string;
+  limit?: number;
+}): Promise<ChannelPairingRequestView[]> {
+  const storedChannelType = resolveStoredChannelType(params.channelType);
+  const normalizedAccountId = normalizeString(params.accountId)?.toLowerCase();
+  const maxItems = Math.max(1, Math.min(params.limit ?? 50, 200));
+  const storePath = join(getOpenClawConfigDir(), 'credentials', `${storedChannelType}-pairing.json`);
+  const raw = await readFile(storePath, 'utf8').catch(() => '');
+  if (!raw.trim()) return [];
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+
+  if (!isRecord(parsed) || !Array.isArray(parsed.requests)) {
+    return [];
+  }
+
+  const requests: ChannelPairingRequestView[] = [];
+  for (const entry of parsed.requests) {
+    if (!isRecord(entry)) continue;
+    const id = normalizeString(entry.id);
+    const code = normalizeString(entry.code);
+    const createdAt = normalizeString(entry.createdAt);
+    if (!id || !code || !createdAt) continue;
+
+    const meta = normalizePairingMeta(entry.meta);
+    const accountId = normalizeString(meta?.accountId);
+    if (normalizedAccountId && accountId?.toLowerCase() !== normalizedAccountId) {
+      continue;
+    }
+
+    requests.push({
+      id,
+      userId: resolvePairingUserId(id, meta),
+      code,
+      createdAt,
+      ...(normalizeString(entry.lastSeenAt) ? { lastSeenAt: normalizeString(entry.lastSeenAt) } : {}),
+      ...(accountId ? { accountId } : {}),
+      ...(meta ? { meta } : {}),
+    });
+  }
+
+  return requests
+    .sort((left, right) => resolveTimestamp(right.createdAt) - resolveTimestamp(left.createdAt))
+    .slice(0, maxItems);
+}
 
 interface WebLoginStartResult {
   qrcodeUrl?: string;
@@ -278,6 +525,7 @@ interface ChannelAccountView {
   status: 'connected' | 'connecting' | 'disconnected' | 'error';
   isDefault: boolean;
   agentId?: string;
+  defaultRecipientId?: string;
 }
 
 interface ChannelAccountsView {
@@ -287,7 +535,19 @@ interface ChannelAccountsView {
   accounts: ChannelAccountView[];
 }
 
-async function buildChannelAccountsView(ctx: HostApiContext): Promise<ChannelAccountsView[]> {
+interface ChannelAccountsCacheEntry {
+  timestampMs: number;
+  channels: ChannelAccountsView[];
+}
+
+const CHANNEL_ACCOUNTS_CACHE_TTL_MS = 5000;
+let channelAccountsCache: ChannelAccountsCacheEntry | null = null;
+
+function clearChannelAccountsCache(): void {
+  channelAccountsCache = null;
+}
+
+async function buildChannelAccountsView(ctx: HostApiContext, options?: { probe?: boolean }): Promise<ChannelAccountsView[]> {
   const [configuredChannels, configuredAccounts, openClawConfig, agentsSnapshot] = await Promise.all([
     listConfiguredChannels(),
     listConfiguredChannelAccounts(),
@@ -297,7 +557,7 @@ async function buildChannelAccountsView(ctx: HostApiContext): Promise<ChannelAcc
 
   let gatewayStatus: GatewayChannelStatusPayload | null;
   try {
-    gatewayStatus = await ctx.gatewayManager.rpc<GatewayChannelStatusPayload>('channels.status', { probe: true });
+    gatewayStatus = await ctx.gatewayManager.rpc<GatewayChannelStatusPayload>('channels.status', { probe: options?.probe === true });
   } catch {
     gatewayStatus = null;
   }
@@ -342,6 +602,14 @@ async function buildChannelAccountsView(ctx: HostApiContext): Promise<ChannelAcc
       const runtime = runtimeAccounts.find((item) => item.accountId === accountId);
       const runtimeSnapshot: ChannelRuntimeAccountSnapshot = runtime ?? {};
       const status = computeChannelRuntimeStatus(runtimeSnapshot);
+      const accountConfig =
+        (channelSection?.accounts && typeof channelSection.accounts === 'object'
+          ? (channelSection.accounts as Record<string, Record<string, unknown>>)[accountId]
+          : undefined) ?? undefined;
+      const defaultRecipientId =
+        normalizeString(accountConfig?.defaultRecipientId)
+        || normalizeString(accountConfig?.deliveryTo)
+        || normalizeString(accountConfig?.to);
       return {
         accountId,
         name: runtime?.name || accountId,
@@ -353,6 +621,7 @@ async function buildChannelAccountsView(ctx: HostApiContext): Promise<ChannelAcc
         status,
         isDefault: accountId === defaultAccountId,
         agentId: agentsSnapshot.channelAccountOwners[`${rawChannelType}:${accountId}`],
+        ...(defaultRecipientId ? { defaultRecipientId } : {}),
       };
     }).sort((left, right) => {
       if (left.accountId === defaultAccountId) return -1;
@@ -385,8 +654,60 @@ export async function handleChannelRoutes(
 
   if (url.pathname === '/api/channels/accounts' && req.method === 'GET') {
     try {
-      const channels = await buildChannelAccountsView(ctx);
+      const probe = url.searchParams.get('probe') === '1';
+      const force = url.searchParams.get('force') === '1';
+      const now = Date.now();
+      if (!probe && !force && channelAccountsCache && (now - channelAccountsCache.timestampMs) < CHANNEL_ACCOUNTS_CACHE_TTL_MS) {
+        sendJson(res, 200, { success: true, channels: channelAccountsCache.channels });
+        return true;
+      }
+      const channels = await buildChannelAccountsView(ctx, { probe });
+      if (!probe) {
+        channelAccountsCache = { timestampMs: now, channels };
+      }
       sendJson(res, 200, { success: true, channels });
+    } catch (error) {
+      sendJson(res, 500, { success: false, error: String(error) });
+    }
+    return true;
+  }
+
+  if (url.pathname === '/api/channels/recipient-options' && req.method === 'GET') {
+    try {
+      const channelType = url.searchParams.get('channelType')?.trim() || '';
+      const accountId = url.searchParams.get('accountId')?.trim() || '';
+      const limit = Number(url.searchParams.get('limit') || '50');
+      if (!channelType) {
+        sendJson(res, 400, { success: false, error: 'channelType is required' });
+        return true;
+      }
+      const recipients = await listRecipientCandidatesFromOpenClaw({
+        channelType,
+        accountId: accountId || undefined,
+        limit: Number.isFinite(limit) ? limit : 50,
+      });
+      sendJson(res, 200, { success: true, recipients });
+    } catch (error) {
+      sendJson(res, 500, { success: false, error: String(error) });
+    }
+    return true;
+  }
+
+  if (url.pathname === '/api/channels/pairing-requests' && req.method === 'GET') {
+    try {
+      const channelType = url.searchParams.get('channelType')?.trim() || '';
+      const accountId = url.searchParams.get('accountId')?.trim() || '';
+      const limit = Number(url.searchParams.get('limit') || '50');
+      if (!channelType) {
+        sendJson(res, 400, { success: false, error: 'channelType is required' });
+        return true;
+      }
+      const requests = await listChannelPairingRequestsFromOpenClaw({
+        channelType,
+        accountId: accountId || undefined,
+        limit: Number.isFinite(limit) ? limit : 50,
+      });
+      sendJson(res, 200, { success: true, requests });
     } catch (error) {
       sendJson(res, 500, { success: false, error: String(error) });
     }
@@ -397,6 +718,7 @@ export async function handleChannelRoutes(
     try {
       const body = await parseJsonBody<{ channelType: string; accountId: string }>(req);
       await setChannelDefaultAccount(body.channelType, body.accountId);
+      clearChannelAccountsCache();
       scheduleGatewayChannelSaveRefresh(ctx, body.channelType, `channel:setDefaultAccount:${body.channelType}`);
       sendJson(res, 200, { success: true });
     } catch (error) {
@@ -409,6 +731,7 @@ export async function handleChannelRoutes(
     try {
       const body = await parseJsonBody<{ channelType: string; accountId: string; agentId: string }>(req);
       await assignChannelAccountToAgent(body.agentId, resolveStoredChannelType(body.channelType), body.accountId);
+      clearChannelAccountsCache();
       scheduleGatewayChannelSaveRefresh(ctx, body.channelType, `channel:setBinding:${body.channelType}`);
       sendJson(res, 200, { success: true });
     } catch (error) {
@@ -421,6 +744,7 @@ export async function handleChannelRoutes(
     try {
       const body = await parseJsonBody<{ channelType: string; accountId: string }>(req);
       await clearChannelBinding(resolveStoredChannelType(body.channelType), body.accountId);
+      clearChannelAccountsCache();
       scheduleGatewayChannelSaveRefresh(ctx, body.channelType, `channel:clearBinding:${body.channelType}`);
       sendJson(res, 200, { success: true });
     } catch (error) {
@@ -565,6 +889,7 @@ export async function handleChannelRoutes(
       }
       await saveChannelConfig(body.channelType, body.config, body.accountId);
       await ensureScopedChannelBinding(body.channelType, body.accountId);
+      clearChannelAccountsCache();
       scheduleGatewayChannelSaveRefresh(ctx, storedChannelType, `channel:saveConfig:${storedChannelType}`);
       sendJson(res, 200, { success: true });
     } catch (error) {
@@ -577,6 +902,7 @@ export async function handleChannelRoutes(
     try {
       const body = await parseJsonBody<{ channelType: string; enabled: boolean }>(req);
       await setChannelEnabled(body.channelType, body.enabled);
+      clearChannelAccountsCache();
       scheduleGatewayChannelRestart(ctx, `channel:setEnabled:${resolveStoredChannelType(body.channelType)}`);
       sendJson(res, 200, { success: true });
     } catch (error) {
@@ -607,10 +933,12 @@ export async function handleChannelRoutes(
       if (accountId) {
         await deleteChannelAccountConfig(channelType, accountId);
         await clearChannelBinding(storedChannelType, accountId);
+        clearChannelAccountsCache();
         scheduleGatewayChannelSaveRefresh(ctx, storedChannelType, `channel:deleteAccount:${storedChannelType}`);
       } else {
         await deleteChannelConfig(channelType);
         await clearAllBindingsForChannel(storedChannelType);
+        clearChannelAccountsCache();
         scheduleGatewayChannelRestart(ctx, `channel:deleteConfig:${storedChannelType}`);
       }
       sendJson(res, 200, { success: true });

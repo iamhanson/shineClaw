@@ -40,7 +40,9 @@
         "discordChannelIdDesc": "Discordチャンネルを右クリック → チャンネルIDをコピー",
         "enableImmediately": "すぐに有効化",
         "enableImmediatelyDesc": "作成後すぐにこのタスクを実行開始",
-        "saveChanges": "変更を保存"
+        "saveChanges": "変更を保存",
+        "skill": "スキル（任意）",
+        "skillNone": "スキルなし"
     },
     "presets": {
         "everyMinute": "毎分",

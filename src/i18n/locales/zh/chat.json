@@ -2,24 +2,37 @@
     "gatewayNotRunning": "网关未运行",
     "gatewayRequired": "OpenClaw 网关需要运行才能使用聊天。它将自动启动，或者您可以从设置中启动。",
     "welcome": {
-        "title": "ClawX 聊天",
-        "subtitle": "我能为你做些什么？",
+        "title": "阿山聊天",
+        "subtitle": "你好，今天一起把事情推进下去。",
+        "description": "直接发任务，或先选一种工作方式开始。",
         "askQuestions": "处理任务",
         "askQuestionsDesc": "处理面向任务的请求",
+        "askQuestionsPrompt": "帮我把当前任务拆成可执行步骤，并直接开始处理第一步。",
         "creativeTasks": "持续执行",
         "creativeTasksDesc": "持续推进多步骤工作",
-        "brainstorming": "多智能体并行"
+        "creativeTasksPrompt": "这是一个需要持续推进的任务，请你自己分阶段执行，并在每一步给出关键结果。",
+        "brainstorming": "多智能体并行",
+        "brainstormingDesc": "为复杂问题拆分方案并并行探索",
+        "brainstormingPrompt": "帮我把这个问题拆成几个方向，并分别给出可行方案与取舍。",
+        "quickFix": "快速排查",
+        "quickFixDesc": "先定位问题，再给最小可行修复",
+        "quickFixPrompt": "请先快速定位问题根因，再给出最小改动的修复方案并直接执行。",
+        "tipModel": "左下角可快速切换模型",
+        "tipSkill": "输入前可附加技能和文件",
+        "tipAgent": "需要时可把消息直接发给其他 Agent"
     },
     "noLogs": "（暂无日志）",
     "toolbar": {
         "refresh": "刷新聊天",
         "showThinking": "显示思考过程",
         "hideThinking": "隐藏思考过程",
-        "currentAgent": "当前对话对象：{{agent}}"
+        "currentAgent": "{{agent}}"
     },
     "composer": {
         "attachFiles": "添加文件",
         "pickAgent": "选择 Agent",
+        "pickModel": "切换模型",
+        "modelPickerTitle": "快速切换当前对话模型",
         "clearTarget": "清除目标 Agent",
         "targetChip": "@{{agent}}",
         "agentPickerTitle": "将下一条消息直接发送给其他 Agent",
@@ -28,8 +41,19 @@
         "stop": "停止",
         "gatewayConnected": "已连接",
         "gatewayStatus": "gateway {{state}} | port: {{port}} {{pid}}",
-        "retryFailedAttachments": "重试失败的附件"
+        "retryFailedAttachments": "重试失败的附件",
+        "pickSkill": "选择技能",
+        "skillPickerTitle": "为本次消息选择技能",
+        "clearSkill": "清除技能",
+        "skillChip": "/ {{skill}}",
+        "noSkillsAvailable": "暂无可用技能",
+        "skillDirective": "请在本次回复中优先使用技能「{{skillName}}」（技能ID: {{skillId}}）。",
+        "personaDirectivePrefix": "人格设定（请在本次回复中遵循）:"
     },
+    "recentTasks": "最近任务",
+    "groupByAgent": "按智能体分组",
+    "ungroupSessions": "取消分组",
+    "groupByAgentShort": "分组",
     "historyBuckets": {
         "today": "今天",
         "yesterday": "昨天",
@@ -37,5 +61,7 @@
         "withinTwoWeeks": "两周内",
         "withinMonth": "一个月内",
         "older": "一个月之前"
-    }
+    },
+    "searchHistory": "搜索历史",
+    "searchHistoryPlaceholder": "搜索最近任务..."
 }

@@ -49,6 +49,16 @@
         "customIdPlaceholder": "例: feishu-sales-bot",
         "customIdHint": "同じチャンネル内の複数アカウントを区別するため、任意の ID を設定できます。",
         "invalidId": "アカウント ID は空にできません",
+        "viewPairingRequests": "ペアリング申請を見る",
+        "pairingRequestsTitle": "ペアリング申請",
+        "pairingRequestsSubtitle": "{{channel}} / {{accountId}}",
+        "noPairingRequests": "保留中のペアリング申請はありません。",
+        "pairingRequest": {
+            "userId": "ユーザー ID",
+            "code": "コード",
+            "createdAt": "申請時刻",
+            "lastSeenAt": "最終確認"
+        },
         "idLabel": "ID: {{id}}",
         "boundTo": "割り当て先: {{agent}}",
         "handledBy": "{{agent}} が処理",
@@ -163,7 +173,7 @@
             "description": "Tencent 公式の OpenClaw プラグインを使い、QRコードをスキャンして個人 WeChat に接続します",
             "docsUrl": "https://icnnp7d0dymg.feishu.cn/wiki/GHYZwuPCriF0gWkXwkFcJ9zon3b",
             "instructions": [
-                "QRコードを生成すると、ClawX が OpenClaw に公式 WeChat プラグインをインストールして有効化します",
+                "QRコードを生成すると、阿山 が OpenClaw に公式 WeChat プラグインをインストールして有効化します",
                 "以下の QR コードを WeChat でスキャンし、スマートフォン側で接続を確認します",
                 "接続が完了すると、WeChat に新しい「WeChat ClawBot」チャットが自動で表示されます",
                 "後から同じ QR フローを使って、別の WeChat アカウントを追加したり既存アカウントを再接続したりできます"
@@ -227,6 +237,10 @@
                 "appSecret": {
                     "label": "App Secret",
                     "placeholder": "アプリのシークレット"
+                },
+                "defaultRecipientId": {
+                    "label": "既定の受信者 ID",
+                    "placeholder": "例: ou_1234567890"
                 }
             },
             "instructions": [

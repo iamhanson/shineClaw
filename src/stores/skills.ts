@@ -68,8 +68,8 @@ interface SkillsState {
 
   // Actions
   fetchSkills: () => Promise<void>;
-  searchSkills: (query: string) => Promise<void>;
-  installSkill: (slug: string, version?: string) => Promise<void>;
+  searchSkills: (query: string, source?: 'clawhub' | 'tencent') => Promise<void>;
+  installSkill: (slug: string, version?: string, source?: 'clawhub' | 'tencent') => Promise<void>;
   uninstallSkill: (slug: string) => Promise<void>;
   enableSkill: (skillId: string) => Promise<void>;
   disableSkill: (skillId: string) => Promise<void>;
@@ -175,12 +175,12 @@ export const useSkillsStore = create<SkillsState>((set, get) => ({
     }
   },
 
-  searchSkills: async (query: string) => {
+  searchSkills: async (query: string, source = 'clawhub') => {
     set({ searching: true, searchError: null });
     try {
       const result = await hostApiFetch<{ success: boolean; results?: MarketplaceSkill[]; error?: string }>('/api/clawhub/search', {
         method: 'POST',
-        body: JSON.stringify({ query }),
+        body: JSON.stringify({ query, source }),
       });
       if (result.success) {
         set({ searchResults: result.results || [] });
@@ -198,12 +198,12 @@ export const useSkillsStore = create<SkillsState>((set, get) => ({
     }
   },
 
-  installSkill: async (slug: string, version?: string) => {
+  installSkill: async (slug: string, version?: string, source = 'clawhub') => {
     set((state) => ({ installing: { ...state.installing, [slug]: true } }));
     try {
       const result = await hostApiFetch<{ success: boolean; error?: string }>('/api/clawhub/install', {
         method: 'POST',
-        body: JSON.stringify({ slug, version }),
+        body: JSON.stringify({ slug, version, source }),
       });
       if (!result.success) {
         const appError = normalizeAppError(new Error(result.error || 'Install failed'), {

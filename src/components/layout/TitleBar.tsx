@@ -52,7 +52,6 @@ function WindowsTitleBar() {
 
   return (
     <div className="drag-region flex h-10 shrink-0 items-center justify-end border-b bg-background">
-
       {/* Right: Window Controls */}
       <div className="no-drag flex h-full">
         <button

@@ -1,6 +1,13 @@
 {
-  "title": "設定",
-  "subtitle": "ClawX の体験をカスタマイズ",
+  "title": "システム設定",
+  "subtitle": "阿山 の体験をカスタマイズ",
+  "nav": {
+    "systemSettings": "システム設定",
+    "models": "モデル管理",
+    "agents": "Agents",
+    "channels": "チャンネル",
+    "skills": "スキル"
+  },
   "appearance": {
     "title": "通用",
     "description": "外観とスタイルをカスタマイズ",
@@ -9,8 +16,12 @@
     "dark": "ダーク",
     "system": "システム",
     "language": "言語",
+    "fontSize": "フォントサイズ",
+    "fontSmall": "小",
+    "fontStandard": "標準",
+    "fontLarge": "大",
     "launchAtStartup": "システム起動時に自動起動",
-    "launchAtStartupDesc": "ログイン時に ClawX を自動的に起動します"
+    "launchAtStartupDesc": "ログイン時に 阿山 を自動的に起動します"
   },
   "aiProviders": {
     "title": "AI プロバイダー",
@@ -37,7 +48,7 @@
     "notRequired": "不要",
     "empty": {
       "title": "プロバイダーが構成されていません",
-      "desc": "ClawX の使用を開始するには AI プロバイダーを追加してください",
+      "desc": "阿山 の使用を開始するには AI プロバイダーを追加してください",
       "cta": "最初のプロバイダーを追加"
     },
     "dialog": {
@@ -52,6 +63,8 @@
       "replaceApiKeyHelp": "現在保存されている API キーをそのまま使う場合は、この欄を空のままにしてください。",
       "baseUrl": "ベース URL",
       "modelId": "モデル ID",
+      "contextWindow": "コンテキスト長",
+      "maxTokens": "最大出力 Tokens",
       "codePlanPreset": "Code Plan プリセット",
       "codePlanMode": "Code Plan",
       "useCodePlanPreset": "Ark Code Plan プリセットを使用",
@@ -60,7 +73,7 @@
       "protocol": "プロトコル",
       "advancedConfig": "詳細設定",
       "userAgent": "User-Agent",
-      "userAgentPlaceholder": "ClawX/1.0",
+      "userAgentPlaceholder": "阿山/1.0",
       "fallbackModels": "フォールバックモデル",
       "fallbackProviders": "別プロバイダーへのフォールバック",
       "fallbackModelIds": "同一プロバイダーのフォールバックモデル ID",
@@ -133,7 +146,7 @@
     "appLogs": "アプリケーションログ",
     "openFolder": "フォルダーを開く",
     "autoStart": "ゲートウェイ自動起動",
-    "autoStartDesc": "ClawX 起動時にゲートウェイを自動起動",
+    "autoStartDesc": "阿山 起動時にゲートウェイを自動起動",
     "proxyTitle": "プロキシ",
     "proxyDesc": "Electron と Gateway の通信をローカルプロキシ経由にします。",
     "proxyServer": "プロキシサーバー",
@@ -154,7 +167,7 @@
   },
   "updates": {
     "title": "アップデート",
-    "description": "ClawX を最新に保つ",
+    "description": "阿山 を最新に保つ",
     "autoCheck": "自動更新チェック",
     "autoCheckDesc": "起動時に更新を確認",
     "autoDownload": "自動アップデート",
@@ -166,6 +179,7 @@
       "downloaded": "インストール準備完了: v{{version}}",
       "autoInstalling": "{{seconds}} 秒後に再起動して更新をインストールします...",
       "failed": "更新の確認に失敗しました",
+      "devModeSkipped": "開発モードのため更新確認をスキップしました（未パッケージ版）",
       "latest": "最新バージョンです",
       "check": "更新を確認して最新の機能を入手"
     },
@@ -179,6 +193,7 @@
       "check": "更新を確認"
     },
     "currentVersion": "現在のバージョン",
+    "versionLabel": "バージョン {{version}}",
     "whatsNew": "更新内容：",
     "errorDetails": "エラー詳細：",
     "help": "自動アップデートが有効な場合、更新は自動的にダウンロードされインストールされます。"
@@ -266,14 +281,27 @@
     "installMessage": "\"openclaw\" コマンドをインストールしますか？",
     "installDetail": "~/.local/bin/openclaw が作成されます。グローバルに実行するには ~/.local/bin が PATH に含まれていることを確認してください。"
   },
+  "runtime": {
+    "title": "実行環境",
+    "checking": "依存関係を確認中...",
+    "notInstalled": "未インストール",
+    "recheck": "再確認"
+  },
   "about": {
-    "title": "バージョン情報",
-    "appName": "ClawX",
     "tagline": "グラフィカル AI アシスタント",
     "basedOn": "OpenClaw ベース",
     "version": "バージョン {{version}}",
     "docs": "公式サイト",
     "github": "GitHub",
     "faq": "よくある質問"
+  },
+  "persona": {
+    "title": "ペルソナ設定",
+    "label": "デフォルトペルソナ",
+    "help": "各チャット送信時の前置き指示として使われます。空欄で無効化されます。",
+    "placeholder": "例: あなたは厳密で簡潔なシニアエンジニアです。",
+    "save": "ペルソナを保存",
+    "saved": "ペルソナを保存しました",
+    "reset": "クリア"
   }
 }

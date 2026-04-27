@@ -110,4 +110,51 @@ describe('saveProviderKeyToOpenClaw', () => {
 
     logSpy.mockRestore();
   });
+
+  it('ignores stale custom provider prefixes from defaults.model.primary when not in models.providers', async () => {
+    await writeOpenClawJson({
+      models: {
+        providers: {
+          'custom-customc5': {
+            baseUrl: 'https://example.com/v2',
+            api: 'openai-completions',
+          },
+          moonshot: {
+            baseUrl: 'https://api.moonshot.cn/v1',
+          },
+        },
+      },
+      agents: {
+        defaults: {
+          model: {
+            primary: 'custom-c52f8192/xopqwen35v35b',
+          },
+        },
+      },
+    });
+
+    const { getActiveOpenClawProviders } = await import('@electron/utils/openclaw-auth');
+    const active = await getActiveOpenClawProviders();
+
+    expect(active.has('custom-customc5')).toBe(true);
+    expect(active.has('moonshot')).toBe(true);
+    expect(active.has('custom-c52f8192')).toBe(false);
+  });
+
+  it('still includes builtin default-model provider when no models.providers entry exists', async () => {
+    await writeOpenClawJson({
+      agents: {
+        defaults: {
+          model: {
+            primary: 'openai/gpt-5.4',
+          },
+        },
+      },
+    });
+
+    const { getActiveOpenClawProviders } = await import('@electron/utils/openclaw-auth');
+    const active = await getActiveOpenClawProviders();
+
+    expect(active.has('openai')).toBe(true);
+  });
 });

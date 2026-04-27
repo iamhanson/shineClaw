@@ -2,8 +2,9 @@
  * Electron Main Process Entry
  * Manages window creation, system tray, and IPC handlers
  */
-import { app, BrowserWindow, nativeImage, session, shell } from 'electron';
+import { app, BrowserWindow, nativeImage, screen, session, shell } from 'electron';
 import type { Server } from 'node:http';
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'path';
 import { GatewayManager } from '../gateway/manager';
 import { registerIpcHandlers } from './ipc-handlers';
@@ -16,8 +17,6 @@ import { warmupNetworkOptimization } from '../utils/uv-env';
 import { initTelemetry } from '../utils/telemetry';
 
 import { ClawHubService } from '../gateway/clawhub';
-import { ensureClawXContext, repairClawXOnlyBootstrapFiles } from '../utils/openclaw-workspace';
-import { autoInstallCliIfNeeded, generateCompletionCache, installCompletionToProfile } from '../utils/openclaw-cli';
 import { isQuitting, setQuitting } from './app-state';
 import { applyProxySettings } from './proxy';
 import { syncLaunchAtStartupSettingFromStore } from './launch-at-startup';
@@ -35,16 +34,16 @@ import {
 import { createSignalQuitHandler } from './signal-quit';
 import { acquireProcessInstanceFileLock } from './process-instance-lock';
 import { getSetting } from '../utils/store';
-import { ensureBuiltinSkillsInstalled, ensurePreinstalledSkillsInstalled } from '../utils/skill-config';
-import { ensureAllBundledPluginsInstalled } from '../utils/plugin-install';
 import { startHostApiServer } from '../api/server';
 import { HostEventBus } from '../api/event-bus';
-import { deviceOAuthManager } from '../utils/device-oauth';
-import { browserOAuthManager } from '../utils/browser-oauth';
-import { whatsAppLoginManager } from '../utils/whatsapp-login';
-import { syncAllProviderAuthToRuntime } from '../services/providers/provider-runtime-sync';
+import { runStages, type BootContext } from './boot/phase-runner';
+import { healthStages } from './boot/phase-health';
+import { backgroundStages } from './boot/phase-background';
+import { applyRuntimePathToProcess } from '../services/dependency/runtime-paths';
 
-const WINDOWS_APP_USER_MODEL_ID = 'app.clawx.desktop';
+const WINDOWS_APP_USER_MODEL_ID = 'com.wonder.shine';
+
+app.setName('阿山');
 
 // Disable GPU hardware acceleration globally for maximum stability across
 // all GPU configurations (no GPU, integrated, discrete).
@@ -63,21 +62,30 @@ const WINDOWS_APP_USER_MODEL_ID = 'app.clawx.desktop';
 app.disableHardwareAcceleration();
 
 // On Linux, set CHROME_DESKTOP so Chromium can find the correct .desktop file.
-// On Wayland this maps the running window to clawx.desktop (→ icon + app grouping);
+// On Wayland this maps the running window to shan.desktop (→ icon + app grouping);
 // on X11 it supplements the StartupWMClass matching.
 // Must be called before app.whenReady() / before any window is created.
 if (process.platform === 'linux') {
-  app.setDesktopName('clawx.desktop');
+  app.setDesktopName('shan.desktop');
 }
 
 // Prevent multiple instances of the app from running simultaneously.
 // Without this, two instances each spawn their own gateway process on the
 // same port, then each treats the other's gateway as "orphaned" and kills
 // it — creating an infinite kill/restart loop on Windows.
-// The losing process must exit immediately so it never reaches Gateway startup.
+//
+// In dev mode, the dev server's hot-reload sometimes spawns a new Electron
+// process before the old one's lock is released. We don't fail-loudly there;
+// we just quit silently so the user sees their existing window.
 const gotElectronLock = app.requestSingleInstanceLock();
 if (!gotElectronLock) {
-  console.info('[ClawX] Another instance already holds the single-instance lock; exiting duplicate process');
+  if (!app.isPackaged) {
+    console.info('[阿山] Dev hot-reload duplicate detected; the existing window will be focused.');
+  } else {
+    console.info(
+      '[阿山] Another instance already holds the single-instance lock; exiting duplicate process'
+    );
+  }
   app.exit(0);
 }
 let releaseProcessInstanceFileLock: () => void = () => {};
@@ -86,10 +94,22 @@ if (gotElectronLock) {
   try {
     const fileLock = acquireProcessInstanceFileLock({
       userDataDir: app.getPath('userData'),
-      lockName: 'clawx',
+      lockName: 'shan',
     });
     gotFileLock = fileLock.acquired;
     releaseProcessInstanceFileLock = fileLock.release;
+
+    // Register exit handler IMMEDIATELY after lock acquisition, regardless of
+    // whether we proceed to full initialization. If we don't proceed (because
+    // file lock was contested), we still need to clean up our own lock file
+    // when this duplicate process exits.
+    process.once('exit', () => {
+      try {
+        releaseProcessInstanceFileLock();
+      } catch {
+        // best-effort
+      }
+    });
     if (!fileLock.acquired) {
       const ownerDescriptor = fileLock.ownerPid
         ? `${fileLock.ownerFormat ?? 'legacy'} pid=${fileLock.ownerPid}`
@@ -97,18 +117,22 @@ if (gotElectronLock) {
           ? 'unknown lock format/content'
           : 'unknown owner';
       console.info(
-        `[ClawX] Another instance already holds process lock (${fileLock.lockPath}, ${ownerDescriptor}); exiting duplicate process`,
+        `[阿山] Another instance already holds process lock (${fileLock.lockPath}, ${ownerDescriptor}); exiting duplicate process`
       );
       app.exit(0);
     }
   } catch (error) {
-    console.warn('[ClawX] Failed to acquire process instance file lock; continuing with Electron single-instance lock only', error);
+    console.warn(
+      '[阿山] Failed to acquire process instance file lock; continuing with Electron single-instance lock only',
+      error
+    );
   }
 }
 const gotTheLock = gotElectronLock && gotFileLock;
 
 // Global references
 let mainWindow: BrowserWindow | null = null;
+let floatingBallWindow: BrowserWindow | null = null;
 let gatewayManager!: GatewayManager;
 let clawHubService!: ClawHubService;
 let hostEventBus!: HostEventBus;
@@ -136,11 +160,27 @@ function getAppIcon(): Electron.NativeImage | undefined {
 
   const iconsDir = getIconsDir();
   const iconPath =
-    process.platform === 'win32'
-      ? join(iconsDir, 'icon.ico')
-      : join(iconsDir, 'icon.png');
+    process.platform === 'win32' ? join(iconsDir, 'icon.ico') : join(iconsDir, 'icon.png');
   const icon = nativeImage.createFromPath(iconPath);
   return icon.isEmpty() ? undefined : icon;
+}
+
+function applyMacDockIcon(): void {
+  if (process.platform !== 'darwin') return;
+
+  const iconCandidates = [
+    join(app.getAppPath(), 'src/assets/logo.icns'),
+    join(__dirname, '../../src/assets/logo.icns'),
+    join(process.resourcesPath, 'resources/icons/icon.icns'),
+  ];
+
+  const iconPath = iconCandidates.find((candidate) => existsSync(candidate));
+  if (!iconPath) return;
+
+  const icon = nativeImage.createFromPath(iconPath);
+  if (!icon.isEmpty()) {
+    app.dock.setIcon(icon);
+  }
 }
 
 /**
@@ -152,10 +192,10 @@ function createWindow(): BrowserWindow {
   const useCustomTitleBar = isWindows;
 
   const win = new BrowserWindow({
-    width: 1280,
-    height: 800,
-    minWidth: 960,
-    minHeight: 600,
+    width: 1000,
+    height: 700,
+    minWidth: 700,
+    minHeight: 700,
     icon: getAppIcon(),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -165,7 +205,7 @@ function createWindow(): BrowserWindow {
       webviewTag: true, // Enable <webview> for embedding OpenClaw Control UI
     },
     titleBarStyle: isMac ? 'hiddenInset' : useCustomTitleBar ? 'hidden' : 'default',
-    trafficLightPosition: isMac ? { x: 16, y: 16 } : undefined,
+    trafficLightPosition: isMac ? { x: 16, y: 12 } : undefined,
     frame: isMac || !useCustomTitleBar,
     show: false,
   });
@@ -179,7 +219,6 @@ function createWindow(): BrowserWindow {
   // Load the app
   if (process.env.VITE_DEV_SERVER_URL) {
     win.loadURL(process.env.VITE_DEV_SERVER_URL);
-    win.webContents.openDevTools();
   } else {
     win.loadFile(join(__dirname, '../../dist/index.html'));
   }
@@ -243,39 +282,323 @@ function createMainWindow(): BrowserWindow {
   return win;
 }
 
+function createFloatingBallWindow(): BrowserWindow {
+  const workArea = screen.getPrimaryDisplay().workArea;
+  const size = 76;
+  const x = workArea.x + workArea.width - size - 18;
+  const y = workArea.y + Math.floor(workArea.height * 0.34);
+
+  const win = new BrowserWindow({
+    width: size,
+    height: size,
+    x,
+    y,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    movable: true,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    hasShadow: false,
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: false,
+    },
+  });
+
+  win.setAlwaysOnTop(true, 'screen-saver');
+  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  win.setMenuBarVisibility(false);
+
+  const petDirs = [
+    join(app.getAppPath(), 'src/assets/pets'),
+    join(__dirname, '../../src/assets/pets'),
+    join(process.cwd(), 'src/assets/pets'),
+  ];
+  const petDir = petDirs.find((dir) => existsSync(dir));
+  const petGifBundle = petDir
+    ? (() => {
+        const files = readdirSync(petDir).filter((name) => /\.gif$/i.test(name));
+        const onGif = files.find((name) => name.toLowerCase() === 'on.gif') || '';
+        const loopFiles = files.filter((name) => name.toLowerCase() !== 'on.gif');
+        const toDataUrl = (filename: string) => {
+          const raw = readFileSync(join(petDir, filename));
+          return `data:image/gif;base64,${raw.toString('base64')}`;
+        };
+        return {
+          onGif: onGif ? toDataUrl(onGif) : '',
+          loopGifs: (loopFiles.length > 0 ? loopFiles : files).map(toDataUrl),
+        };
+      })()
+    : { onGif: '', loopGifs: [] as string[] };
+
+  const floatingBallHtml = `
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <style>
+      html, body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        padding: 0;
+        background: transparent;
+        overflow: hidden;
+      }
+      body {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+      button {
+        width: 68px;
+        height: 68px;
+        border: 0;
+        border-radius: 999px;
+        cursor: pointer !important;
+        padding: 0;
+        background: transparent;
+        box-shadow: none;
+        transition: transform 120ms ease;
+        animation: breathe 2.2s ease-in-out infinite;
+        overflow: hidden;
+        touch-action: none;
+        user-select: none;
+        -webkit-user-select: none;
+        -webkit-user-drag: none;
+      }
+      button:hover {
+        transform: scale(1.04);
+      }
+      button:active { transform: scale(0.96); }
+      img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        border-radius: 999px;
+        opacity: 1;
+        transition: opacity 220ms ease;
+        user-select: none;
+        -webkit-user-select: none;
+        -webkit-user-drag: none;
+        pointer-events: none;
+        cursor: pointer !important;
+      }
+      .fallback {
+        width: 100%;
+        height: 100%;
+        border-radius: 999px;
+        display: grid;
+        place-items: center;
+        color: #ffffff;
+        font-size: 22px;
+        font-weight: 600;
+        background: radial-gradient(circle at 30% 30%, #4ade80 0%, #10b981 45%, #059669 100%);
+        cursor: pointer !important;
+      }
+      button * {
+        cursor: pointer !important;
+      }
+      @keyframes breathe {
+        0%, 100% { transform: scale(1); }
+        50% { transform: scale(1.04); }
+      }
+    </style>
+  </head>
+  <body>
+    <button id="ball"></button>
+    <script>
+      const petGifBundle = ${JSON.stringify(petGifBundle)};
+      const ball = document.getElementById('ball');
+      let dragging = false;
+      let activePointerId = null;
+      let suppressClick = false;
+      let dragStartX = 0;
+      let dragStartY = 0;
+      let startWindowX = 0;
+      let startWindowY = 0;
+      let movedPx = 0;
+      let loopTimer = null;
+      let currentIndex = 0;
+      let imageEl = null;
+      let hovered = false;
+
+      function mountFallback() {
+        if (!ball) return;
+        ball.innerHTML = '<div class="fallback">阿</div>';
+      }
+
+      function mountCarousel() {
+        if (!ball || !petGifBundle.loopGifs.length) {
+          mountFallback();
+          return;
+        }
+        imageEl = document.createElement('img');
+        imageEl.draggable = false;
+        imageEl.src = petGifBundle.loopGifs[currentIndex];
+        ball.appendChild(imageEl);
+        loopTimer = setInterval(() => {
+          if (!imageEl || hovered) return;
+          currentIndex = (currentIndex + 1) % petGifBundle.loopGifs.length;
+          imageEl.style.opacity = '0';
+          setTimeout(() => {
+            if (!imageEl) return;
+            imageEl.src = petGifBundle.loopGifs[currentIndex];
+            imageEl.style.opacity = '1';
+          }, 120);
+        }, 2600);
+      }
+
+      mountCarousel();
+
+      ball?.addEventListener('mouseenter', () => {
+        hovered = true;
+        if (!imageEl || !petGifBundle.onGif) return;
+        imageEl.src = petGifBundle.onGif;
+      });
+
+      ball?.addEventListener('mouseleave', () => {
+        hovered = false;
+        if (!imageEl || !petGifBundle.loopGifs.length) return;
+        imageEl.src = petGifBundle.loopGifs[currentIndex];
+      });
+
+      function onPointerMove(event) {
+        if (!dragging) return;
+        if (activePointerId !== null && event.pointerId !== activePointerId) return;
+        const nextX = startWindowX + (event.screenX - dragStartX);
+        const nextY = startWindowY + (event.screenY - dragStartY);
+        movedPx = Math.max(movedPx, Math.abs(event.screenX - dragStartX), Math.abs(event.screenY - dragStartY));
+        window.electron.ipcRenderer.invoke('floating:setPosition', nextX, nextY).catch(() => {});
+      }
+
+      function stopDrag(event) {
+        if (!dragging) return;
+        if (event && activePointerId !== null && event.pointerId !== activePointerId) return;
+        suppressClick = movedPx > 4;
+        dragging = false;
+        if (ball && activePointerId !== null && ball.hasPointerCapture(activePointerId)) {
+          ball.releasePointerCapture(activePointerId);
+        }
+        activePointerId = null;
+        window.removeEventListener('pointermove', onPointerMove);
+        window.removeEventListener('pointerup', stopDrag);
+        window.removeEventListener('pointercancel', stopDrag);
+      }
+
+      ball?.addEventListener('dragstart', (event) => {
+        event.preventDefault();
+      });
+
+      ball?.addEventListener('pointerdown', (event) => {
+        event.preventDefault();
+        dragging = true;
+        activePointerId = event.pointerId;
+        movedPx = 0;
+        dragStartX = event.screenX;
+        dragStartY = event.screenY;
+        startWindowX = window.screenX;
+        startWindowY = window.screenY;
+        ball.setPointerCapture(event.pointerId);
+        window.addEventListener('pointermove', onPointerMove);
+        window.addEventListener('pointerup', stopDrag);
+        window.addEventListener('pointercancel', stopDrag);
+      });
+
+      ball?.addEventListener('click', async () => {
+        if (suppressClick) {
+          suppressClick = false;
+          return;
+        }
+        try {
+          await window.electron.ipcRenderer.invoke('hostapi:fetch', {
+            path: '/api/app/show-main-window',
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: '{}',
+          });
+        } catch (error) {
+          console.error('Failed to show main window from floating ball:', error);
+        }
+      });
+
+      window.addEventListener('beforeunload', () => {
+        stopDrag();
+        if (loopTimer) clearInterval(loopTimer);
+      });
+    </script>
+  </body>
+</html>
+`;
+
+  const floatingHtmlPath = join(app.getPath('userData'), 'floating-ball.html');
+  writeFileSync(floatingHtmlPath, floatingBallHtml, 'utf8');
+  void win.loadFile(floatingHtmlPath);
+  win.showInactive();
+
+  win.on('closed', () => {
+    if (floatingBallWindow === win) {
+      floatingBallWindow = null;
+    }
+  });
+
+  floatingBallWindow = win;
+  return win;
+}
+
+function setFloatingBallEnabled(enabled: boolean): void {
+  if (!enabled) {
+    if (floatingBallWindow && !floatingBallWindow.isDestroyed()) {
+      floatingBallWindow.close();
+    }
+    floatingBallWindow = null;
+    return;
+  }
+
+  if (floatingBallWindow && !floatingBallWindow.isDestroyed()) {
+    floatingBallWindow.showInactive();
+    return;
+  }
+
+  createFloatingBallWindow();
+}
+
 /**
- * Initialize the application
+ * Initialize the application — three-phase boot sequence.
  */
 async function initialize(): Promise<void> {
-  // Initialize logger first
   logger.init();
-  logger.info('=== ClawX Application Starting ===');
+  logger.info('=== 阿山 Application Starting ===');
   logger.debug(
     `Runtime: platform=${process.platform}/${process.arch}, electron=${process.versions.electron}, node=${process.versions.node}, packaged=${app.isPackaged}, pid=${process.pid}, ppid=${process.ppid}`
   );
 
-  // Warm up network optimization (non-blocking)
+  // Apply managed runtime PATH before anything else
+  applyRuntimePathToProcess();
+
+  // ── Phase 1: Critical (blocks window display) ──────────────────────────
   void warmupNetworkOptimization();
-
-  // Initialize Telemetry early
   await initTelemetry();
-
-  // Apply persisted proxy settings before creating windows or network requests.
   await applyProxySettings();
   await syncLaunchAtStartupSettingFromStore();
 
-  // Set application menu
   createMenu();
+  applyMacDockIcon();
 
-  // Create the main window
   const window = createMainWindow();
-
-  // Create system tray
+  const floatingBallEnabled = await getSetting('floatingBallEnabled');
+  setFloatingBallEnabled(floatingBallEnabled);
   createTray(window);
 
-  // Override security headers ONLY for the OpenClaw Gateway Control UI.
-  // The URL filter ensures this callback only fires for gateway requests,
-  // avoiding unnecessary overhead on every other HTTP response.
   session.defaultSession.webRequest.onHeadersReceived(
     { urls: ['http://127.0.0.1:18789/*', 'http://localhost:18789/*'] },
     (details, callback) => {
@@ -283,168 +606,47 @@ async function initialize(): Promise<void> {
       delete headers['X-Frame-Options'];
       delete headers['x-frame-options'];
       if (headers['Content-Security-Policy']) {
-        headers['Content-Security-Policy'] = headers['Content-Security-Policy'].map(
-          (csp) => csp.replace(/frame-ancestors\s+'none'/g, "frame-ancestors 'self' *")
+        headers['Content-Security-Policy'] = headers['Content-Security-Policy'].map((csp) =>
+          csp.replace(/frame-ancestors\s+'none'/g, "frame-ancestors 'self' *")
         );
       }
       if (headers['content-security-policy']) {
-        headers['content-security-policy'] = headers['content-security-policy'].map(
-          (csp) => csp.replace(/frame-ancestors\s+'none'/g, "frame-ancestors 'self' *")
+        headers['content-security-policy'] = headers['content-security-policy'].map((csp) =>
+          csp.replace(/frame-ancestors\s+'none'/g, "frame-ancestors 'self' *")
         );
       }
       callback({ responseHeaders: headers });
-    },
+    }
   );
 
-  // Register IPC handlers
-  registerIpcHandlers(gatewayManager, clawHubService, window);
+  registerIpcHandlers(gatewayManager, clawHubService, window, () => floatingBallWindow);
 
   hostApiServer = startHostApiServer({
     gatewayManager,
     clawHubService,
     eventBus: hostEventBus,
     mainWindow: window,
+    setFloatingBallEnabled,
   });
 
-  // Register update handlers
   registerUpdateHandlers(appUpdater, window);
+  logger.info('[boot] phase=critical done');
 
-  // Note: Auto-check for updates is driven by the renderer (update store init)
-  // so it respects the user's "Auto-check for updates" setting.
+  // ── Phase 2: Health (dependency gate) ──────────────────────────────────
+  const bootCtx: BootContext = {
+    mainWindow: window,
+    gatewayManager,
+    clawHubService,
+    hostEventBus,
+    hostApiServer,
+    setFloatingBallEnabled,
+    floatingBallWindow: () => floatingBallWindow,
+  };
 
-  // Repair any bootstrap files that only contain ClawX markers (no OpenClaw
-  // template content). This fixes a race condition where ensureClawXContext()
-  // previously created the file before the gateway could seed the full template.
-  void repairClawXOnlyBootstrapFiles().catch((error) => {
-    logger.warn('Failed to repair bootstrap files:', error);
-  });
+  await runStages('health', healthStages, bootCtx);
 
-  // Pre-deploy built-in skills (feishu-doc, feishu-drive, feishu-perm, feishu-wiki)
-  // to ~/.openclaw/skills/ so they are immediately available without manual install.
-  void ensureBuiltinSkillsInstalled().catch((error) => {
-    logger.warn('Failed to install built-in skills:', error);
-  });
-
-  // Pre-deploy bundled third-party skills from resources/preinstalled-skills.
-  // This installs full skill directories (not only SKILL.md) in an idempotent,
-  // non-destructive way and never blocks startup.
-  void ensurePreinstalledSkillsInstalled().catch((error) => {
-    logger.warn('Failed to install preinstalled skills:', error);
-  });
-
-  // Pre-deploy/upgrade bundled OpenClaw plugins (dingtalk, wecom, qqbot, feishu, wechat)
-  // to ~/.openclaw/extensions/ so they are always up-to-date after an app update.
-  void ensureAllBundledPluginsInstalled().catch((error) => {
-    logger.warn('Failed to install/upgrade bundled plugins:', error);
-  });
-
-  // Bridge gateway and host-side events before any auto-start logic runs, so
-  // renderer subscribers observe the full startup lifecycle.
-  gatewayManager.on('status', (status: { state: string }) => {
-    hostEventBus.emit('gateway:status', status);
-    if (status.state === 'running') {
-      void ensureClawXContext().catch((error) => {
-        logger.warn('Failed to re-merge ClawX context after gateway reconnect:', error);
-      });
-    }
-  });
-
-  gatewayManager.on('error', (error) => {
-    hostEventBus.emit('gateway:error', { message: error.message });
-  });
-
-  gatewayManager.on('notification', (notification) => {
-    hostEventBus.emit('gateway:notification', notification);
-  });
-
-  gatewayManager.on('chat:message', (data) => {
-    hostEventBus.emit('gateway:chat-message', data);
-  });
-
-  gatewayManager.on('channel:status', (data) => {
-    hostEventBus.emit('gateway:channel-status', data);
-  });
-
-  gatewayManager.on('exit', (code) => {
-    hostEventBus.emit('gateway:exit', { code });
-  });
-
-  deviceOAuthManager.on('oauth:code', (payload) => {
-    hostEventBus.emit('oauth:code', payload);
-  });
-
-  deviceOAuthManager.on('oauth:start', (payload) => {
-    hostEventBus.emit('oauth:start', payload);
-  });
-
-  deviceOAuthManager.on('oauth:success', (payload) => {
-    hostEventBus.emit('oauth:success', { ...payload, success: true });
-  });
-
-  deviceOAuthManager.on('oauth:error', (error) => {
-    hostEventBus.emit('oauth:error', error);
-  });
-
-  browserOAuthManager.on('oauth:start', (payload) => {
-    hostEventBus.emit('oauth:start', payload);
-  });
-
-  browserOAuthManager.on('oauth:code', (payload) => {
-    hostEventBus.emit('oauth:code', payload);
-  });
-
-  browserOAuthManager.on('oauth:success', (payload) => {
-    hostEventBus.emit('oauth:success', { ...payload, success: true });
-  });
-
-  browserOAuthManager.on('oauth:error', (error) => {
-    hostEventBus.emit('oauth:error', error);
-  });
-
-  whatsAppLoginManager.on('qr', (data) => {
-    hostEventBus.emit('channel:whatsapp-qr', data);
-  });
-
-  whatsAppLoginManager.on('success', (data) => {
-    hostEventBus.emit('channel:whatsapp-success', data);
-  });
-
-  whatsAppLoginManager.on('error', (error) => {
-    hostEventBus.emit('channel:whatsapp-error', error);
-  });
-
-  // Start Gateway automatically (this seeds missing bootstrap files with full templates)
-  const gatewayAutoStart = await getSetting('gatewayAutoStart');
-  if (gatewayAutoStart) {
-    try {
-      await syncAllProviderAuthToRuntime();
-      logger.debug('Auto-starting Gateway...');
-      await gatewayManager.start();
-      logger.info('Gateway auto-start succeeded');
-    } catch (error) {
-      logger.error('Gateway auto-start failed:', error);
-      mainWindow?.webContents.send('gateway:error', String(error));
-    }
-  } else {
-    logger.info('Gateway auto-start disabled in settings');
-  }
-
-  // Merge ClawX context snippets into the workspace bootstrap files.
-  // The gateway seeds workspace files asynchronously after its HTTP server
-  // is ready, so ensureClawXContext will retry until the target files appear.
-  void ensureClawXContext().catch((error) => {
-    logger.warn('Failed to merge ClawX context into workspace:', error);
-  });
-
-  // Auto-install openclaw CLI and shell completions (non-blocking).
-  void autoInstallCliIfNeeded((installedPath) => {
-    mainWindow?.webContents.send('openclaw:cli-installed', installedPath);
-  }).then(() => {
-    generateCompletionCache();
-    installCompletionToProfile();
-  }).catch((error) => {
-    logger.warn('CLI auto-install failed:', error);
-  });
+  // ── Phase 3: Background (non-blocking) ─────────────────────────────────
+  void runStages('background', backgroundStages, bootCtx);
 }
 
 if (gotTheLock) {
@@ -474,11 +676,11 @@ if (gotTheLock) {
 
   // When a second instance is launched, focus the existing window instead.
   app.on('second-instance', () => {
-    logger.info('Second ClawX instance detected; redirecting to the existing window');
+    logger.info('Second 阿山 instance detected; redirecting to the existing window');
 
     const focusRequest = requestSecondInstanceFocus(
       mainWindowFocusState,
-      Boolean(mainWindow && !mainWindow.isDestroyed()),
+      Boolean(mainWindow && !mainWindow.isDestroyed())
     );
 
     if (focusRequest === 'focus-now') {
@@ -486,7 +688,9 @@ if (gotTheLock) {
       return;
     }
 
-    logger.debug('Main window is not ready yet; deferring second-instance focus until ready-to-show');
+    logger.debug(
+      'Main window is not ready yet; deferring second-instance focus until ready-to-show'
+    );
   });
 
   // Application lifecycle
@@ -523,7 +727,9 @@ if (gotTheLock) {
     event.preventDefault();
 
     if (action === 'cleanup-in-progress') {
-      logger.debug('Quit requested while cleanup already in progress; waiting for shutdown task to finish');
+      logger.debug(
+        'Quit requested while cleanup already in progress; waiting for shutdown task to finish'
+      );
       return;
     }
 
@@ -537,20 +743,25 @@ if (gotTheLock) {
       setTimeout(() => resolve('timeout'), 5000);
     });
 
-    void Promise.race([stopPromise.then(() => 'stopped' as const), timeoutPromise]).then((result) => {
-      if (result === 'timeout') {
-        logger.warn('Gateway shutdown timed out during app quit; proceeding with forced quit');
-        void gatewayManager.forceTerminateOwnedProcessForQuit().then((terminated) => {
-          if (terminated) {
-            logger.warn('Forced gateway process termination completed after quit timeout');
-          }
-        }).catch((err) => {
-          logger.warn('Forced gateway termination failed after quit timeout:', err);
-        });
+    void Promise.race([stopPromise.then(() => 'stopped' as const), timeoutPromise]).then(
+      (result) => {
+        if (result === 'timeout') {
+          logger.warn('Gateway shutdown timed out during app quit; proceeding with forced quit');
+          void gatewayManager
+            .forceTerminateOwnedProcessForQuit()
+            .then((terminated) => {
+              if (terminated) {
+                logger.warn('Forced gateway process termination completed after quit timeout');
+              }
+            })
+            .catch((err) => {
+              logger.warn('Forced gateway termination failed after quit timeout:', err);
+            });
+        }
+        markQuitCleanupCompleted(quitLifecycleState);
+        app.quit();
       }
-      markQuitCleanupCompleted(quitLifecycleState);
-      app.quit();
-    });
+    );
   });
 
   // Best-effort Gateway cleanup on unexpected crashes.
@@ -559,7 +770,9 @@ if (gotTheLock) {
   const emergencyGatewayCleanup = (reason: string, error: unknown): void => {
     logger.error(`${reason}:`, error);
     try {
-      void gatewayManager?.stop().catch(() => { /* ignore */ });
+      void gatewayManager?.stop().catch(() => {
+        /* ignore */
+      });
     } catch {
       // ignore — stop() may not be callable if state is corrupted
     }

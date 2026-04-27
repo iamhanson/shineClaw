@@ -15,13 +15,16 @@ import { Agents } from './pages/Agents';
 import { Channels } from './pages/Channels';
 import { Skills } from './pages/Skills';
 import { Cron } from './pages/Cron';
+import { MailPage } from './pages/Mail';
+import { CalendarPage } from './pages/Calendar';
 import { Settings } from './pages/Settings';
 import { Setup } from './pages/Setup';
+import { DependencyGate } from './pages/DependencyGate';
 import { useSettingsStore } from './stores/settings';
 import { useGatewayStore } from './stores/gateway';
 import { useProviderStore } from './stores/providers';
+import { useDependencyGateStore } from './stores/dependency';
 import { applyGatewayTransportPreference } from './lib/api-client';
-
 
 /**
  * Error Boundary to catch and display React rendering errors
@@ -46,28 +49,35 @@ class ErrorBoundary extends Component<
   render() {
     if (this.state.hasError) {
       return (
-        <div style={{
-          padding: '40px',
-          color: '#f87171',
-          background: '#0f172a',
-          minHeight: '100vh',
-          fontFamily: 'monospace'
-        }}>
+        <div
+          style={{
+            padding: '40px',
+            color: '#f87171',
+            background: '#0f172a',
+            minHeight: '100vh',
+            fontFamily: 'monospace',
+          }}
+        >
           <h1 style={{ fontSize: '24px', marginBottom: '16px' }}>Something went wrong</h1>
-          <pre style={{
-            whiteSpace: 'pre-wrap',
-            wordBreak: 'break-all',
-            background: '#1e293b',
-            padding: '16px',
-            borderRadius: '8px',
-            fontSize: '14px'
-          }}>
+          <pre
+            style={{
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-all',
+              background: '#1e293b',
+              padding: '16px',
+              borderRadius: '8px',
+              fontSize: '14px',
+            }}
+          >
             {this.state.error?.message}
             {'\n\n'}
             {this.state.error?.stack}
           </pre>
           <button
-            onClick={() => { this.setState({ hasError: false, error: null }); window.location.reload(); }}
+            onClick={() => {
+              this.setState({ hasError: false, error: null });
+              window.location.reload();
+            }}
             style={{
               marginTop: '16px',
               padding: '8px 16px',
@@ -75,7 +85,7 @@ class ErrorBoundary extends Component<
               color: 'white',
               border: 'none',
               borderRadius: '6px',
-              cursor: 'pointer'
+              cursor: 'pointer',
             }}
           >
             Reload
@@ -92,14 +102,25 @@ function App() {
   const location = useLocation();
   const initSettings = useSettingsStore((state) => state.init);
   const theme = useSettingsStore((state) => state.theme);
+  const fontSize = useSettingsStore((state) => state.fontSize);
   const language = useSettingsStore((state) => state.language);
   const setupComplete = useSettingsStore((state) => state.setupComplete);
   const initGateway = useGatewayStore((state) => state.init);
   const initProviders = useProviderStore((state) => state.init);
+  const initDependency = useDependencyGateStore((state) => state.init);
+  const fetchDependencySnapshot = useDependencyGateStore((state) => state.fetchSnapshot);
+  const gateRequired = useDependencyGateStore((state) => state.gateRequired);
 
   useEffect(() => {
     initSettings();
   }, [initSettings]);
+
+  // Subscribe to dependency events for the lifetime of the app
+  useEffect(() => {
+    const dispose = initDependency();
+    void fetchDependencySnapshot();
+    return dispose;
+  }, [initDependency, fetchDependencySnapshot]);
 
   // Sync i18n language with persisted settings on mount
   useEffect(() => {
@@ -118,12 +139,16 @@ function App() {
     initProviders();
   }, [initProviders]);
 
-  // Redirect to setup wizard if not complete
+  // Route priority: dependency-gate > setup > main
   useEffect(() => {
-    if (!setupComplete && !location.pathname.startsWith('/setup')) {
+    if (gateRequired && !location.pathname.startsWith('/dependency-gate')) {
+      navigate('/dependency-gate');
+      return;
+    }
+    if (!gateRequired && !setupComplete && !location.pathname.startsWith('/setup')) {
       navigate('/setup');
     }
-  }, [setupComplete, location.pathname, navigate]);
+  }, [gateRequired, setupComplete, location.pathname, navigate]);
 
   // Listen for navigation events from main process
   useEffect(() => {
@@ -142,6 +167,13 @@ function App() {
       }
     };
   }, [navigate]);
+
+  // Apply font size
+  useEffect(() => {
+    const root = window.document.documentElement;
+    root.classList.remove('font-size-small', 'font-size-standard', 'font-size-large');
+    root.classList.add(`font-size-${fontSize || 'small'}`);
+  }, [fontSize]);
 
   // Apply theme
   useEffect(() => {
@@ -166,6 +198,9 @@ function App() {
     <ErrorBoundary>
       <TooltipProvider delayDuration={300}>
         <Routes>
+          {/* Dependency gate (blocks until missing deps installed) */}
+          <Route path="/dependency-gate" element={<DependencyGate />} />
+
           {/* Setup wizard (shown on first launch) */}
           <Route path="/setup/*" element={<Setup />} />
 
@@ -177,17 +212,14 @@ function App() {
             <Route path="/channels" element={<Channels />} />
             <Route path="/skills" element={<Skills />} />
             <Route path="/cron" element={<Cron />} />
+            <Route path="/calendar" element={<CalendarPage />} />
+            <Route path="/mail" element={<MailPage />} />
             <Route path="/settings/*" element={<Settings />} />
           </Route>
         </Routes>
 
         {/* Global toast notifications */}
-        <Toaster
-          position="bottom-right"
-          richColors
-          closeButton
-          style={{ zIndex: 99999 }}
-        />
+        <Toaster position="bottom-right" richColors closeButton style={{ zIndex: 99999 }} />
       </TooltipProvider>
     </ErrorBoundary>
   );

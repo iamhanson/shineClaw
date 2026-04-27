@@ -1,0 +1,15 @@
+{
+  "title": "依存関係が必要です",
+  "description": "アプリの実行には以下の依存関係が必要です。不足分は自動インストールできます。",
+  "checking": "依存関係を確認中...",
+  "actions": {
+    "recheck": "再確認",
+    "installMissing": "不足分をインストール ({{count}})"
+  },
+  "success": {
+    "title": "環境の準備完了",
+    "description": "すべての依存関係がインストールされました。次にAIモデルを設定して始めましょう。",
+    "configureModel": "AIモデルを設定",
+    "skipToMain": "スキップしてメインへ"
+  }
+}

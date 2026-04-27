@@ -12,8 +12,18 @@ interface AgentsState {
   loading: boolean;
   error: string | null;
   fetchAgents: () => Promise<void>;
-  createAgent: (name: string, options?: { inheritWorkspace?: boolean }) => Promise<void>;
-  updateAgent: (agentId: string, name: string) => Promise<void>;
+  createAgent: (
+    name: string,
+    options?: {
+      agentId?: string;
+      inheritWorkspace?: boolean;
+      model?: string;
+      preferredSkills?: string[];
+      instructions?: string;
+    },
+  ) => Promise<void>;
+  importAgent: (payload: { filePath?: string; url?: string }) => Promise<void>;
+  updateAgent: (agentId: string, patch: { name?: string; model?: string | null }) => Promise<void>;
   deleteAgent: (agentId: string) => Promise<void>;
   assignChannel: (agentId: string, channelType: ChannelType) => Promise<void>;
   removeChannel: (agentId: string, channelType: ChannelType) => Promise<void>;
@@ -52,12 +62,28 @@ export const useAgentsStore = create<AgentsState>((set) => ({
     }
   },
 
-  createAgent: async (name: string, options?: { inheritWorkspace?: boolean }) => {
+  createAgent: async (
+    name: string,
+    options?: {
+      agentId?: string;
+      inheritWorkspace?: boolean;
+      model?: string;
+      preferredSkills?: string[];
+      instructions?: string;
+    },
+  ) => {
     set({ error: null });
     try {
       const snapshot = await hostApiFetch<AgentsSnapshot & { success?: boolean }>('/api/agents', {
         method: 'POST',
-        body: JSON.stringify({ name, inheritWorkspace: options?.inheritWorkspace }),
+        body: JSON.stringify({
+          name,
+          agentId: options?.agentId,
+          inheritWorkspace: options?.inheritWorkspace,
+          model: options?.model,
+          preferredSkills: options?.preferredSkills,
+          instructions: options?.instructions,
+        }),
       });
       set(applySnapshot(snapshot));
     } catch (error) {
@@ -66,14 +92,31 @@ export const useAgentsStore = create<AgentsState>((set) => ({
     }
   },
 
-  updateAgent: async (agentId: string, name: string) => {
+  importAgent: async (payload: { filePath?: string; url?: string }) => {
+    set({ error: null });
+    try {
+      const snapshot = await hostApiFetch<AgentsSnapshot & { success?: boolean }>('/api/agents/import', {
+        method: 'POST',
+        body: JSON.stringify({
+          filePath: payload.filePath,
+          url: payload.url,
+        }),
+      });
+      set(applySnapshot(snapshot));
+    } catch (error) {
+      set({ error: String(error) });
+      throw error;
+    }
+  },
+
+  updateAgent: async (agentId: string, patch: { name?: string; model?: string | null }) => {
     set({ error: null });
     try {
       const snapshot = await hostApiFetch<AgentsSnapshot & { success?: boolean }>(
         `/api/agents/${encodeURIComponent(agentId)}`,
         {
           method: 'PUT',
-          body: JSON.stringify({ name }),
+          body: JSON.stringify(patch),
         }
       );
       set(applySnapshot(snapshot));

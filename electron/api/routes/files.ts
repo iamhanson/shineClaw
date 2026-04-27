@@ -3,6 +3,7 @@ import { dialog, nativeImage } from 'electron';
 import crypto from 'node:crypto';
 import { extname, join } from 'node:path';
 import { homedir } from 'node:os';
+import { createReadStream } from 'node:fs';
 import type { HostApiContext } from '../context';
 import { parseJsonBody, sendJson } from '../route-utils';
 
@@ -81,6 +82,60 @@ export async function handleFileRoutes(
   url: URL,
   _ctx: HostApiContext,
 ): Promise<boolean> {
+  if (url.pathname === '/api/files/media' && req.method === 'GET') {
+    try {
+      const filePathParam = url.searchParams.get('path');
+      if (!filePathParam) {
+        sendJson(res, 400, { success: false, error: 'Missing file path' });
+        return true;
+      }
+
+      const filePath = decodeURIComponent(filePathParam);
+      const fsP = await import('node:fs/promises');
+      const stat = await fsP.stat(filePath);
+      if (!stat.isFile()) {
+        sendJson(res, 404, { success: false, error: 'File not found' });
+        return true;
+      }
+
+      const ext = extname(filePath);
+      const mimeType = url.searchParams.get('mime') || getMimeType(ext);
+      const total = stat.size;
+      const range = req.headers.range;
+
+      res.setHeader('Accept-Ranges', 'bytes');
+      res.setHeader('Content-Type', mimeType);
+      res.setHeader('Cache-Control', 'no-store');
+
+      if (range) {
+        const matches = /bytes=(\d*)-(\d*)/.exec(range);
+        const start = matches?.[1] ? Number(matches[1]) : 0;
+        const end = matches?.[2] ? Number(matches[2]) : total - 1;
+
+        if (!Number.isFinite(start) || !Number.isFinite(end) || start > end || start >= total) {
+          res.statusCode = 416;
+          res.setHeader('Content-Range', `bytes */${total}`);
+          res.end();
+          return true;
+        }
+
+        const boundedEnd = Math.min(end, total - 1);
+        res.statusCode = 206;
+        res.setHeader('Content-Range', `bytes ${start}-${boundedEnd}/${total}`);
+        res.setHeader('Content-Length', String(boundedEnd - start + 1));
+        createReadStream(filePath, { start, end: boundedEnd }).pipe(res);
+        return true;
+      }
+
+      res.statusCode = 200;
+      res.setHeader('Content-Length', String(total));
+      createReadStream(filePath).pipe(res);
+    } catch (error) {
+      sendJson(res, 404, { success: false, error: String(error) });
+    }
+    return true;
+  }
+
   if (url.pathname === '/api/files/stage-paths' && req.method === 'POST') {
     try {
       const body = await parseJsonBody<{ filePaths: string[] }>(req);

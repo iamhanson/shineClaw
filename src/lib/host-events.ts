@@ -18,6 +18,10 @@ const HOST_EVENT_TO_IPC_CHANNEL: Record<string, string> = {
   'channel:wechat-qr': 'channel:wechat-qr',
   'channel:wechat-success': 'channel:wechat-success',
   'channel:wechat-error': 'channel:wechat-error',
+  'boot:gate-required': 'boot:gate-required',
+  'dep:progress': 'dep:progress',
+  'dep:status-changed': 'dep:status-changed',
+  'dep:snapshot': 'dep:snapshot',
 };
 
 function getEventSource(): EventSource {
@@ -37,7 +41,7 @@ function allowSseFallback(): boolean {
 
 export function subscribeHostEvent<T = unknown>(
   eventName: string,
-  handler: (payload: T) => void,
+  handler: (payload: T) => void
 ): () => void {
   const ipc = window.electron?.ipcRenderer;
   const ipcChannel = HOST_EVENT_TO_IPC_CHANNEL[eventName];

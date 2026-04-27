@@ -106,6 +106,7 @@
         "searching": "ClawHubを検索中...",
         "noResults": "検索に一致するスキルが見つかりません。",
         "emptyPrompt": "新しいスキルを検索して機能を拡張しましょう。",
-        "searchError": "ClawHub検索に失敗しました。接続またはインストールを確認してください。"
+        "searchError": "ClawHub検索に失敗しました。接続またはインストールを確認してください。",
+        "sourceTencent": "Tencent Hub"
     }
 }

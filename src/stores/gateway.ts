@@ -14,6 +14,7 @@ const gatewayEventDedupe = new Map<string, number>();
 const GATEWAY_EVENT_DEDUPE_TTL_MS = 30_000;
 const LOAD_SESSIONS_MIN_INTERVAL_MS = 1_200;
 const LOAD_HISTORY_MIN_INTERVAL_MS = 800;
+const GATEWAY_START_TIMEOUT_MS = 15_000;
 let lastLoadSessionsAt = 0;
 let lastLoadHistoryAt = 0;
 
@@ -298,20 +299,38 @@ export const useGatewayStore = create<GatewayState>((set, get) => ({
   start: async () => {
     try {
       set({ status: { ...get().status, state: 'starting' }, lastError: null });
-      const result = await hostApiFetch<{ success: boolean; error?: string }>('/api/gateway/start', {
-        method: 'POST',
-      });
+      const result = await Promise.race([
+        hostApiFetch<{ success: boolean; error?: string }>('/api/gateway/start', {
+          method: 'POST',
+        }),
+        new Promise<{ success: false; error: string }>((resolve) => {
+          setTimeout(() => {
+            resolve({ success: false, error: 'Gateway start timed out' });
+          }, GATEWAY_START_TIMEOUT_MS);
+        }),
+      ]);
       if (!result.success) {
+        let nextStatus = get().status;
+        try {
+          nextStatus = await hostApiFetch<GatewayStatus>('/api/gateway/status');
+        } catch {
+          // ignore refresh errors
+        }
         set({
-          status: { ...get().status, state: 'error', error: result.error },
+          status: nextStatus.state === 'running'
+            ? nextStatus
+            : { ...nextStatus, state: 'error', error: result.error },
           lastError: result.error || 'Failed to start Gateway',
         });
+        throw new Error(result.error || 'Failed to start Gateway');
       }
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       set({
-        status: { ...get().status, state: 'error', error: String(error) },
-        lastError: String(error),
+        status: { ...get().status, state: 'error', error: message },
+        lastError: message,
       });
+      throw error;
     }
   },
 
@@ -328,20 +347,38 @@ export const useGatewayStore = create<GatewayState>((set, get) => ({
   restart: async () => {
     try {
       set({ status: { ...get().status, state: 'starting' }, lastError: null });
-      const result = await hostApiFetch<{ success: boolean; error?: string }>('/api/gateway/restart', {
-        method: 'POST',
-      });
+      const result = await Promise.race([
+        hostApiFetch<{ success: boolean; error?: string }>('/api/gateway/restart', {
+          method: 'POST',
+        }),
+        new Promise<{ success: false; error: string }>((resolve) => {
+          setTimeout(() => {
+            resolve({ success: false, error: 'Gateway restart timed out' });
+          }, GATEWAY_START_TIMEOUT_MS);
+        }),
+      ]);
       if (!result.success) {
+        let nextStatus = get().status;
+        try {
+          nextStatus = await hostApiFetch<GatewayStatus>('/api/gateway/status');
+        } catch {
+          // ignore refresh errors
+        }
         set({
-          status: { ...get().status, state: 'error', error: result.error },
+          status: nextStatus.state === 'running'
+            ? nextStatus
+            : { ...nextStatus, state: 'error', error: result.error },
           lastError: result.error || 'Failed to restart Gateway',
         });
+        throw new Error(result.error || 'Failed to restart Gateway');
       }
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       set({
-        status: { ...get().status, state: 'error', error: String(error) },
-        lastError: String(error),
+        status: { ...get().status, state: 'error', error: message },
+        lastError: message,
       });
+      throw error;
     }
   },
 

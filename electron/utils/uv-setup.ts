@@ -16,7 +16,15 @@ function getBundledUvPath(): string {
   const binName = platform === 'win32' ? 'uv.exe' : 'uv';
 
   if (app.isPackaged) {
-    return join(process.resourcesPath, 'bin', binName);
+    const candidates = [
+      join(process.resourcesPath, 'bin', binName),
+      join(process.resourcesPath, 'resources', 'bin', binName),
+      join(process.resourcesPath, 'resources', 'bin', target, binName),
+      join(process.resourcesPath, 'bin', target, binName),
+    ];
+
+    const found = candidates.find((candidate) => existsSync(candidate));
+    return found || candidates[0];
   } else {
     return join(process.cwd(), 'resources', 'bin', target, binName);
   }

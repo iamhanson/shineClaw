@@ -1,5 +1,5 @@
 {
-    "name": "clawx",
+    "name": "com.wonder.shine",
     "version": "0.3.0",
     "pnpm": {
         "onlyBuiltDependencies": [
@@ -26,9 +26,9 @@
             ]
         }
     },
-    "description": "ClawX - Graphical AI Assistant based on OpenClaw",
+    "description": "阿山 - 基于 OpenClaw 的图形化 AI 助手",
     "main": "dist-electron/main/index.js",
-    "author": "ClawX Team",
+    "author": "Xiangshanxing",
     "license": "MIT",
     "private": true,
     "scripts": {
@@ -54,10 +54,10 @@
         "prep:win-binaries": "pnpm run uv:download:win && pnpm run node:download:win",
         "icons": "zx scripts/generate-icons.mjs",
         "package": "vite build && zx scripts/bundle-openclaw.mjs && zx scripts/bundle-openclaw-plugins.mjs && zx scripts/bundle-preinstalled-skills.mjs",
-        "package:mac": "pnpm run package && electron-builder --mac --publish never",
-        "package:mac:local": "SKIP_PREINSTALLED_SKILLS=1 pnpm run package && electron-builder --mac --publish never",
+        "package:mac": "pnpm run uv:download:mac && pnpm run package && electron-builder --mac --arm64 --publish never",
+        "package:mac:local": "pnpm run uv:download && SKIP_PREINSTALLED_SKILLS=1 pnpm run package && electron-builder --mac --arm64 --publish never",
         "package:win": "pnpm run prep:win-binaries && pnpm run package && electron-builder --win --publish never",
-        "package:linux": "pnpm run package && electron-builder --linux --publish never",
+        "package:linux": "pnpm run uv:download:linux && pnpm run package && electron-builder --linux --publish never",
         "release": "pnpm run uv:download && pnpm run package && electron-builder --publish always",
         "version:patch": "pnpm version patch",
         "version:minor": "pnpm version minor",

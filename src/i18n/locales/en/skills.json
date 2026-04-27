@@ -106,6 +106,7 @@
         "searching": "Searching ClawHub...",
         "noResults": "No skills found matching your search.",
         "emptyPrompt": "Search for new skills to expand your capabilities.",
-        "searchError": "ClawHub search failed. Check your connection or installation."
+        "searchError": "ClawHub search failed. Check your connection or installation.",
+        "sourceTencent": "Tencent Hub"
     }
 }

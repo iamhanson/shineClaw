@@ -75,7 +75,8 @@ import {
 export function registerIpcHandlers(
   gatewayManager: GatewayManager,
   clawHubService: ClawHubService,
-  mainWindow: BrowserWindow
+  mainWindow: BrowserWindow,
+  getFloatingWindow?: () => BrowserWindow | null
 ): void {
   // Unified request protocol (non-breaking: legacy channels remain available)
   registerUnifiedRequestHandlers(gatewayManager);
@@ -126,7 +127,7 @@ export function registerIpcHandlers(
   registerCronHandlers(gatewayManager);
 
   // Window control handlers (for custom title bar on Windows/Linux)
-  registerWindowHandlers(mainWindow);
+  registerWindowHandlers(mainWindow, getFloatingWindow);
 
   // WhatsApp handlers
   registerWhatsAppHandlers(mainWindow);
@@ -2101,7 +2102,10 @@ function registerUsageHandlers(): void {
 /**
  * Window control handlers (for custom title bar on Windows)
  */
-function registerWindowHandlers(mainWindow: BrowserWindow): void {
+function registerWindowHandlers(
+  mainWindow: BrowserWindow,
+  getFloatingWindow?: () => BrowserWindow | null,
+): void {
   ipcMain.handle('window:minimize', () => {
     mainWindow.minimize();
   });
@@ -2120,6 +2124,14 @@ function registerWindowHandlers(mainWindow: BrowserWindow): void {
 
   ipcMain.handle('window:isMaximized', () => {
     return mainWindow.isMaximized();
+  });
+
+  ipcMain.handle('floating:setPosition', (_, x: number, y: number) => {
+    const floating = getFloatingWindow?.();
+    if (!floating || floating.isDestroyed()) return { success: false };
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return { success: false };
+    floating.setPosition(Math.round(x), Math.round(y));
+    return { success: true };
   });
 }
 

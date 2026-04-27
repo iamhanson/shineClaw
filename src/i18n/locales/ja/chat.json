@@ -2,13 +2,24 @@
     "gatewayNotRunning": "ゲートウェイが停止中",
     "gatewayRequired": "チャットを利用するには OpenClaw ゲートウェイが実行されている必要があります。自動的に起動するか、設定から起動できます。",
     "welcome": {
-        "title": "ClawX チャット",
+        "title": "阿山 チャット",
         "subtitle": "お手伝いできることはありますか？",
+        "description": "まずは進め方をひとつ選べます。タスクをそのまま送ってもよいですし、作業モードを決めてから始めても大丈夫です。",
         "askQuestions": "タスク対応",
         "askQuestionsDesc": "タスク指向の依頼に対応します",
+        "askQuestionsPrompt": "このタスクを実行可能なステップに分解して、最初のステップから進めてください。",
         "creativeTasks": "連続実行",
         "creativeTasksDesc": "複数ステップの作業を継続して進めます",
-        "brainstorming": "マルチエージェント並列実行"
+        "creativeTasksPrompt": "このタスクは継続的に進めたいです。段階ごとに区切って、各段階の結果を示しながら進めてください。",
+        "brainstorming": "マルチエージェント並列実行",
+        "brainstormingDesc": "複雑な問題を複数の方向から並行して整理します",
+        "brainstormingPrompt": "この問題をいくつかの方向に分けて、それぞれの案とトレードオフをまとめてください。",
+        "quickFix": "クイック修正",
+        "quickFixDesc": "原因を先に特定し、最小変更で修正",
+        "quickFixPrompt": "まず問題の根本原因を特定し、最小限の変更で修正を実行してください。",
+        "tipModel": "左下の操作からモデルをすばやく切り替え",
+        "tipSkill": "送信前にスキルやファイルを添付可能",
+        "tipAgent": "必要なら別の Agent に直接送れます"
     },
     "noLogs": "（ログはまだありません）",
     "toolbar": {
@@ -20,6 +31,8 @@
     "composer": {
         "attachFiles": "ファイルを添付",
         "pickAgent": "Agent を選択",
+        "pickModel": "モデル切替",
+        "modelPickerTitle": "現在のチャットモデルをすばやく切り替え",
         "clearTarget": "送信先 Agent をクリア",
         "targetChip": "@{{agent}}",
         "agentPickerTitle": "次のメッセージを別の Agent に直接送信します",
@@ -28,8 +41,19 @@
         "stop": "停止",
         "gatewayConnected": "接続済み",
         "gatewayStatus": "ゲートウェイ {{state}} | ポート: {{port}} {{pid}}",
-        "retryFailedAttachments": "失敗した添付を再試行"
+        "retryFailedAttachments": "失敗した添付を再試行",
+        "pickSkill": "スキルを選択",
+        "skillPickerTitle": "このメッセージで使うスキルを選択",
+        "clearSkill": "スキルをクリア",
+        "skillChip": "/ {{skill}}",
+        "noSkillsAvailable": "利用可能なスキルがありません",
+        "skillDirective": "この返信ではスキル「{{skillName}}」（スキルID: {{skillId}}）を優先して使用してください。",
+        "personaDirectivePrefix": "ペルソナ設定（この返信で従うこと）:"
     },
+    "recentTasks": "最近のタスク",
+    "groupByAgent": "Agent 別にグループ化",
+    "ungroupSessions": "グループ化を解除",
+    "groupByAgentShort": "グループ",
     "historyBuckets": {
         "today": "今日",
         "yesterday": "昨日",
@@ -37,5 +61,7 @@
         "withinTwoWeeks": "2週間以内",
         "withinMonth": "1か月以内",
         "older": "1か月より前"
-    }
+    },
+    "searchHistory": "履歴を検索",
+    "searchHistoryPlaceholder": "最近のタスクを検索..."
 }

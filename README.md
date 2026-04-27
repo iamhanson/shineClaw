@@ -1,9 +1,9 @@
 
 <p align="center">
-  <img src="src/assets/logo.svg" width="128" height="128" alt="ClawX Logo" />
+  <img src="src/assets/logo-default.png" width="128" height="128" alt="阿山 Logo" />
 </p>
 
-<h1 align="center">ClawX</h1>
+<h1 align="center">阿山</h1>
 
 <p align="center">
   <strong>The Desktop Interface for OpenClaw AI Agents</strong>
@@ -11,7 +11,7 @@
 
 <p align="center">
   <a href="#features">Features</a> •
-  <a href="#why-clawx">Why ClawX</a> •
+  <a href="#why-ashan">Why Ashan</a> •
   <a href="#getting-started">Getting Started</a> •
   <a href="#architecture">Architecture</a> •
   <a href="#development">Development</a> •
@@ -37,11 +37,11 @@
 
 ## Overview
 
-**ClawX** bridges the gap between powerful AI agents and everyday users. Built on top of [OpenClaw](https://github.com/OpenClaw), it transforms command-line AI orchestration into an accessible, beautiful desktop experience—no terminal required.
+**阿山** bridges the gap between powerful AI agents and everyday users. Built on top of [OpenClaw](https://github.com/OpenClaw), it transforms command-line AI orchestration into an accessible, beautiful desktop experience—no terminal required.
 
-Whether you're automating workflows, managing AI-powered channels, or scheduling intelligent tasks, ClawX provides the interface you need to harness AI agents effectively.
+Whether you're automating workflows, managing AI-powered channels, or scheduling intelligent tasks, 阿山 provides the interface you need to harness AI agents effectively.
 
-ClawX comes pre-configured with best-practice model providers and natively supports Windows as well as multi-language settings. Of course, you can also fine-tune advanced configurations via **Settings → Advanced → Developer Mode**.
+阿山 comes pre-configured with best-practice model providers and natively supports Windows as well as multi-language settings. Of course, you can also fine-tune advanced configurations via **Settings → Advanced → Developer Mode**.
 
 ---
 ## Screenshot
@@ -72,11 +72,11 @@ ClawX comes pre-configured with best-practice model providers and natively suppo
 
 ---
 
-## Why ClawX
+## Why Ashan
 
-Building AI agents shouldn't require mastering the command line. ClawX was designed with a simple philosophy: **powerful technology deserves an interface that respects your time.**
+Building AI agents shouldn't require mastering the command line. 阿山 was designed with a simple philosophy: **powerful technology deserves an interface that respects your time.**
 
-| Challenge | ClawX Solution |
+| Challenge | Ashan Solution |
 |-----------|----------------|
 | Complex CLI setup | One-click installation with guided setup wizard |
 | Configuration files | Visual settings with real-time validation |
@@ -86,7 +86,7 @@ Building AI agents shouldn't require mastering the command line. ClawX was desig
 
 ### OpenClaw Inside
 
-ClawX is built directly upon the official **OpenClaw** core. Instead of requiring a separate installation, we embed the runtime within the application to provide a seamless "battery-included" experience.
+阿山 is built directly upon the official **OpenClaw** core. Instead of requiring a separate installation, we embed the runtime within the application to provide a seamless "battery-included" experience.
 
 We are committed to maintaining strict alignment with the upstream OpenClaw project, ensuring that you always have access to the latest capabilities, stability improvements, and ecosystem compatibility provided by the official releases.
 
@@ -108,6 +108,9 @@ ClawX now also bundles Tencent's official personal WeChat channel plugin, so you
 
 ### ⏰ Cron-Based Automation
 Schedule AI tasks to run automatically. Define triggers, set intervals, and let your AI agents work around the clock without manual intervention.
+
+### 🗓️ Local Calendar
+Includes a lightweight calendar page inspired by the macOS Calendar app, with month view, day agenda, all-day events, color tags, and quick search. The current version stores schedule data locally inside the app and does not require system calendar permissions.
 
 ### 🧩 Extensible Skill System
 Extend your AI agents with pre-built skills. Browse, install, and manage skills through the integrated skill panel—no package managers required.

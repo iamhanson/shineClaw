@@ -7,12 +7,13 @@ import {
   listAgentsSnapshot,
   removeAgentWorkspaceDirectory,
   resolveAccountIdForAgent,
-  updateAgentName,
+  updateAgentConfig,
 } from '../../utils/agent-config';
 import { deleteChannelAccountConfig } from '../../utils/channel-config';
 import { syncAllProviderAuthToRuntime } from '../../services/providers/provider-runtime-sync';
 import type { HostApiContext } from '../context';
 import { parseJsonBody, sendJson } from '../route-utils';
+import { readFile } from 'fs/promises';
 
 function scheduleGatewayReload(ctx: HostApiContext, reason: string): void {
   if (ctx.gatewayManager.getStatus().state !== 'stopped') {
@@ -25,6 +26,94 @@ function scheduleGatewayReload(ctx: HostApiContext, reason: string): void {
 import { exec } from 'child_process';
 import { promisify } from 'util';
 const execAsync = promisify(exec);
+
+interface ImportedAgentPayload {
+  name?: unknown;
+  model?: unknown;
+  preferredSkills?: unknown;
+  skills?: unknown;
+  instructions?: unknown;
+  prompt?: unknown;
+  systemPrompt?: unknown;
+  soul?: unknown;
+  inheritWorkspace?: unknown;
+}
+
+function toTrimmedString(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function toStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => (typeof item === 'string' ? item.trim() : ''))
+    .filter(Boolean);
+}
+
+function parseImportedAgentText(raw: string): {
+  name: string;
+  options: {
+    inheritWorkspace?: boolean;
+    model?: string;
+    preferredSkills?: string[];
+    instructions?: string;
+  };
+} {
+  const text = raw.trim();
+  if (!text) {
+    throw new Error('Import source is empty');
+  }
+
+  let payload: ImportedAgentPayload | null = null;
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    if (parsed && typeof parsed === 'object') {
+      payload = parsed as ImportedAgentPayload;
+    }
+  } catch {
+    payload = null;
+  }
+
+  if (payload) {
+    const nestedAgent =
+      payload && typeof (payload as Record<string, unknown>).agent === 'object'
+        ? ((payload as Record<string, unknown>).agent as ImportedAgentPayload)
+        : null;
+    const candidate = nestedAgent ?? payload;
+
+    const name = toTrimmedString(candidate.name) || 'Imported Agent';
+    const model = toTrimmedString(candidate.model);
+    const preferredSkills = [
+      ...toStringList(candidate.preferredSkills),
+      ...toStringList(candidate.skills),
+    ];
+    const instructionCandidates = [
+      toTrimmedString(candidate.instructions),
+      toTrimmedString(candidate.prompt),
+      toTrimmedString(candidate.systemPrompt),
+      toTrimmedString(candidate.soul),
+    ].filter(Boolean);
+    const instructions = instructionCandidates[0] || undefined;
+
+    return {
+      name,
+      options: {
+        inheritWorkspace: candidate.inheritWorkspace === true,
+        model: model || undefined,
+        preferredSkills: preferredSkills.length > 0 ? Array.from(new Set(preferredSkills)) : undefined,
+        instructions,
+      },
+    };
+  }
+
+  return {
+    name: 'Imported Agent',
+    options: {
+      inheritWorkspace: false,
+      instructions: text,
+    },
+  };
+}
 
 /**
  * Force a full Gateway process restart after agent deletion.
@@ -117,8 +206,21 @@ export async function handleAgentRoutes(
 
   if (url.pathname === '/api/agents' && req.method === 'POST') {
     try {
-      const body = await parseJsonBody<{ name: string; inheritWorkspace?: boolean }>(req);
-      const snapshot = await createAgent(body.name, { inheritWorkspace: body.inheritWorkspace });
+      const body = await parseJsonBody<{
+        name: string;
+        agentId?: string;
+        inheritWorkspace?: boolean;
+        model?: string;
+        preferredSkills?: string[];
+        instructions?: string;
+      }>(req);
+      const snapshot = await createAgent(body.name, {
+        agentId: body.agentId,
+        inheritWorkspace: body.inheritWorkspace,
+        model: body.model,
+        preferredSkills: body.preferredSkills,
+        instructions: body.instructions,
+      });
       // Sync provider API keys to the new agent's auth-profiles.json so the
       // embedded runner can authenticate with LLM providers when messages
       // arrive via channel bots (e.g. Feishu). Without this, the copied
@@ -134,15 +236,53 @@ export async function handleAgentRoutes(
     return true;
   }
 
+  if (url.pathname === '/api/agents/import' && req.method === 'POST') {
+    try {
+      const body = await parseJsonBody<{ filePath?: string; url?: string }>(req);
+      const filePath = typeof body.filePath === 'string' ? body.filePath.trim() : '';
+      const importUrl = typeof body.url === 'string' ? body.url.trim() : '';
+
+      if (!filePath && !importUrl) {
+        sendJson(res, 400, { success: false, error: 'filePath or url is required' });
+        return true;
+      }
+
+      let sourceText = '';
+      if (filePath) {
+        sourceText = await readFile(filePath, 'utf-8');
+      } else {
+        const response = await fetch(importUrl);
+        if (!response.ok) {
+          throw new Error(`Failed to fetch import URL: ${response.status}`);
+        }
+        sourceText = await response.text();
+      }
+
+      const imported = parseImportedAgentText(sourceText);
+      const snapshot = await createAgent(imported.name, imported.options);
+      syncAllProviderAuthToRuntime().catch((err) => {
+        console.warn('[agents] Failed to sync provider auth after agent import:', err);
+      });
+      scheduleGatewayReload(ctx, 'import-agent');
+      sendJson(res, 200, { success: true, ...snapshot });
+    } catch (error) {
+      sendJson(res, 500, { success: false, error: String(error) });
+    }
+    return true;
+  }
+
   if (url.pathname.startsWith('/api/agents/') && req.method === 'PUT') {
     const suffix = url.pathname.slice('/api/agents/'.length);
     const parts = suffix.split('/').filter(Boolean);
 
     if (parts.length === 1) {
       try {
-        const body = await parseJsonBody<{ name: string }>(req);
+        const body = await parseJsonBody<{ name?: string; model?: string | null }>(req);
         const agentId = decodeURIComponent(parts[0]);
-        const snapshot = await updateAgentName(agentId, body.name);
+        const snapshot = await updateAgentConfig(agentId, {
+          name: body.name,
+          ...(Object.prototype.hasOwnProperty.call(body, 'model') ? { model: body.model ?? null } : {}),
+        });
         scheduleGatewayReload(ctx, 'update-agent');
         sendJson(res, 200, { success: true, ...snapshot });
       } catch (error) {

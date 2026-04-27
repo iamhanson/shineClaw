@@ -2,13 +2,24 @@
     "gatewayNotRunning": "Gateway Not Running",
     "gatewayRequired": "The OpenClaw Gateway needs to be running to use chat. It will start automatically, or you can start it from Settings.",
     "welcome": {
-        "title": "ClawX Chat",
+        "title": "Ashan Chat",
         "subtitle": "What can I do for you?",
+        "description": "Start from a clear lane. You can send a task directly, or pick a working mode so Ashan can get into the right rhythm faster.",
         "askQuestions": "Handle Tasks",
         "askQuestionsDesc": "Work on task-oriented requests",
+        "askQuestionsPrompt": "Help me break this task into executable steps and start with the first one.",
         "creativeTasks": "Continuous Execution",
         "creativeTasksDesc": "Keep running through multi-step work",
-        "brainstorming": "Multi-Agent Parallel"
+        "creativeTasksPrompt": "This task needs continuous execution. Please break it into phases and keep moving it forward with clear outputs.",
+        "brainstorming": "Multi-Agent Parallel",
+        "brainstormingDesc": "Split a complex problem into parallel tracks",
+        "brainstormingPrompt": "Break this problem into several directions and give me options with tradeoffs for each.",
+        "quickFix": "Quick Fix",
+        "quickFixDesc": "Find the root cause, then patch with minimal change",
+        "quickFixPrompt": "Please locate the root cause first, then apply the smallest viable fix directly.",
+        "tipModel": "Quick switch models from the lower-left controls",
+        "tipSkill": "Attach skills and files before sending",
+        "tipAgent": "Route the message to another agent when needed"
     },
     "noLogs": "(No logs available yet)",
     "toolbar": {
@@ -20,6 +31,8 @@
     "composer": {
         "attachFiles": "Attach files",
         "pickAgent": "Choose agent",
+        "pickModel": "Switch model",
+        "modelPickerTitle": "Quick switch the active chat model",
         "clearTarget": "Clear target agent",
         "targetChip": "@{{agent}}",
         "agentPickerTitle": "Route the next message to another agent",
@@ -28,8 +41,19 @@
         "stop": "Stop",
         "gatewayConnected": "connected",
         "gatewayStatus": "gateway {{state}} | port: {{port}} {{pid}}",
-        "retryFailedAttachments": "Retry failed attachments"
+        "retryFailedAttachments": "Retry failed attachments",
+        "pickSkill": "Choose skill",
+        "skillPickerTitle": "Choose a skill for this message",
+        "clearSkill": "Clear skill",
+        "skillChip": "/ {{skill}}",
+        "noSkillsAvailable": "No available skills",
+        "skillDirective": "For this reply, prioritize skill \"{{skillName}}\" (Skill ID: {{skillId}}).",
+        "personaDirectivePrefix": "Persona setup (follow for this reply):"
     },
+    "recentTasks": "Recent Tasks",
+    "groupByAgent": "Group by agent",
+    "ungroupSessions": "Ungroup sessions",
+    "groupByAgentShort": "Group",
     "historyBuckets": {
         "today": "Today",
         "yesterday": "Yesterday",
@@ -37,5 +61,7 @@
         "withinTwoWeeks": "Within 2 Weeks",
         "withinMonth": "Within 1 Month",
         "older": "Older than 1 Month"
-    }
+    },
+    "searchHistory": "Search History",
+    "searchHistoryPlaceholder": "Search recent tasks..."
 }

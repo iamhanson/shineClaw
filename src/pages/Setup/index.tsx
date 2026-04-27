@@ -110,7 +110,7 @@ import {
   hasConfiguredCredentials,
   pickPreferredAccount,
 } from '@/lib/provider-accounts';
-import clawxIcon from '@/assets/logo.svg';
+import clawxIcon from '@/assets/logo-default.png';
 
 // Use the shared provider registry for setup providers
 const providers = SETUP_PROVIDERS;
@@ -326,7 +326,7 @@ function WelcomeContent() {
   return (
     <div className="text-center space-y-4">
       <div className="mb-4 flex justify-center">
-        <img src={clawxIcon} alt="ClawX" className="h-16 w-16" />
+        <img src={clawxIcon} alt="阿山" className="h-16 w-16" />
       </div>
       <h2 className="text-xl font-semibold">{t('welcome.title')}</h2>
       <p className="text-muted-foreground">
@@ -544,7 +544,17 @@ function RuntimeContent({ onStatusChange }: RuntimeContentProps) {
       ...prev,
       gateway: { status: 'checking', message: 'Starting...' },
     }));
-    await startGateway();
+    try {
+      await startGateway();
+      toast.success('已发送启动请求');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setChecks((prev) => ({
+        ...prev,
+        gateway: { status: 'error', message },
+      }));
+      toast.error(message);
+    }
   };
 
   const handleShowLogs = async () => {

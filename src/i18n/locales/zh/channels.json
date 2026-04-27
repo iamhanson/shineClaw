@@ -49,6 +49,16 @@
         "customIdPlaceholder": "例如：feishu-sales-bot",
         "customIdHint": "可自定义账号 ID，用于区分同一频道下的多个账号。",
         "invalidId": "账号 ID 不能为空",
+        "viewPairingRequests": "查看配对请求",
+        "pairingRequestsTitle": "配对请求",
+        "pairingRequestsSubtitle": "{{channel}} / {{accountId}}",
+        "noPairingRequests": "暂无待处理的配对请求",
+        "pairingRequest": {
+            "userId": "用户 ID",
+            "code": "配对码",
+            "createdAt": "申请时间",
+            "lastSeenAt": "最近出现"
+        },
         "idLabel": "ID: {{id}}",
         "boundTo": "绑定对象：{{agent}}",
         "handledBy": "由 {{agent}} 处理",
@@ -163,7 +173,7 @@
             "description": "通过腾讯官方 OpenClaw 插件扫码连接个人微信",
             "docsUrl": "https://icnnp7d0dymg.feishu.cn/wiki/GHYZwuPCriF0gWkXwkFcJ9zon3b",
             "instructions": [
-                "点击生成二维码，ClawX 会在 OpenClaw 中安装并启用官方微信插件",
+                "点击生成二维码，阿山会在 OpenClaw 中安装并启用官方微信插件",
                 "使用微信扫描下方二维码，并在手机上确认连接",
                 "连接成功后，微信里会自动出现新的「微信 ClawBot」对话",
                 "之后可再次通过扫码流程添加更多微信账号，或重新连接已有账号"
@@ -227,6 +237,10 @@
                 "appSecret": {
                     "label": "应用密钥 (App Secret)",
                     "placeholder": "您的应用密钥"
+                },
+                "defaultRecipientId": {
+                    "label": "默认接收人 ID",
+                    "placeholder": "例如：ou_1234567890"
                 }
             },
             "instructions": [

@@ -5,10 +5,13 @@ const mocks = vi.hoisted(() => ({
   listProviderAccounts: vi.fn(),
   deleteProviderAccount: vi.fn(),
   saveProviderAccount: vi.fn(),
+  getProviderAccount: vi.fn(),
+  getDefaultProviderAccountId: vi.fn(),
   getActiveOpenClawProviders: vi.fn(),
   getOpenClawProvidersConfig: vi.fn(),
   getOpenClawProviderKeyForType: vi.fn(),
   getAliasSourceTypes: vi.fn(),
+  storeApiKey: vi.fn(),
   loggerWarn: vi.fn(),
   loggerInfo: vi.fn(),
 }));
@@ -20,8 +23,8 @@ vi.mock('@electron/services/providers/provider-migration', () => ({
 vi.mock('@electron/services/providers/provider-store', () => ({
   listProviderAccounts: mocks.listProviderAccounts,
   deleteProviderAccount: mocks.deleteProviderAccount,
-  getProviderAccount: vi.fn(),
-  getDefaultProviderAccountId: vi.fn(),
+  getProviderAccount: mocks.getProviderAccount,
+  getDefaultProviderAccountId: mocks.getDefaultProviderAccountId,
   providerAccountToConfig: vi.fn(),
   providerConfigToAccount: vi.fn(),
   saveProviderAccount: mocks.saveProviderAccount,
@@ -45,7 +48,7 @@ vi.mock('@electron/utils/secure-storage', () => ({
   hasApiKey: vi.fn(),
   saveProvider: vi.fn(),
   setDefaultProvider: vi.fn(),
-  storeApiKey: vi.fn(),
+  storeApiKey: mocks.storeApiKey,
 }));
 
 vi.mock('@electron/utils/logger', () => ({
@@ -95,6 +98,8 @@ describe('ProviderService.listAccounts (openclaw.json as sole source of truth)',
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.ensureProviderStoreMigrated.mockResolvedValue(undefined);
+    mocks.getProviderAccount.mockResolvedValue(null);
+    mocks.getDefaultProviderAccountId.mockResolvedValue(undefined);
     setupDefaultKeyMapping();
     mocks.getAliasSourceTypes.mockReturnValue([]);
     mocks.getOpenClawProvidersConfig.mockResolvedValue({ providers: {}, defaultModel: undefined });
@@ -160,7 +165,10 @@ describe('ProviderService.listAccounts (openclaw.json as sole source of truth)',
 
     const result = await service.listAccounts();
 
-    expect(mocks.saveProviderAccount).not.toHaveBeenCalled();
+    expect(mocks.saveProviderAccount).toHaveBeenCalledTimes(1);
+    expect(mocks.saveProviderAccount).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'moonshot', vendorId: 'moonshot' }),
+    );
     expect(result).toHaveLength(1);
     expect(result[0].label).toBe('My Moonshot');
   });
@@ -177,7 +185,10 @@ describe('ProviderService.listAccounts (openclaw.json as sole source of truth)',
 
     const result = await service.listAccounts();
 
-    expect(mocks.saveProviderAccount).not.toHaveBeenCalled();
+    expect(mocks.saveProviderAccount).toHaveBeenCalledTimes(1);
+    expect(mocks.saveProviderAccount).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'openrouter-uuid-1234', vendorId: 'openrouter' }),
+    );
     expect(result).toHaveLength(1);
     expect(result[0].id).toBe('openrouter-uuid-1234');
   });
@@ -230,7 +241,10 @@ describe('ProviderService.listAccounts (openclaw.json as sole source of truth)',
 
     expect(result).toHaveLength(1);
     expect(result[0].id).toBe('minimax-portal-cn-uuid');
-    expect(mocks.saveProviderAccount).not.toHaveBeenCalled();
+    expect(mocks.saveProviderAccount).toHaveBeenCalledTimes(1);
+    expect(mocks.saveProviderAccount).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'minimax-portal-cn-uuid', vendorId: 'minimax-portal-cn' }),
+    );
     expect(mocks.deleteProviderAccount).not.toHaveBeenCalled();
   });
 
@@ -287,5 +301,44 @@ describe('ProviderService.listAccounts (openclaw.json as sole source of truth)',
     const ids = result.map((a: ProviderAccount) => a.id);
     expect(ids).toContain('openrouter-uuid');
     expect(ids).toContain('minimax-portal-cn-uuid');
+  });
+
+  it('maps defaultModel provider key to an actual account id when store default is missing', async () => {
+    mocks.getDefaultProviderAccountId.mockResolvedValue(undefined);
+    mocks.getActiveOpenClawProviders.mockResolvedValue(new Set(['google-gemini-cli']));
+    mocks.getOpenClawProvidersConfig.mockResolvedValue({
+      providers: { 'google-gemini-cli': { baseUrl: 'http://127.0.0.1:4122' } },
+      defaultModel: 'google-gemini-cli/gemini-2.5-pro',
+    });
+    mocks.listProviderAccounts.mockResolvedValue([
+      makeAccount({
+        id: 'google',
+        vendorId: 'google-gemini-cli' as ProviderAccount['vendorId'],
+      }),
+    ]);
+
+    const result = await service.getDefaultAccountId();
+
+    expect(result).toBe('google');
+  });
+
+  it('does not import openclaw provider apiKey field into secure storage', async () => {
+    mocks.getActiveOpenClawProviders.mockResolvedValue(new Set(['custom-customc5']));
+    mocks.getOpenClawProvidersConfig.mockResolvedValue({
+      providers: {
+        'custom-customc5': {
+          baseUrl: 'https://maas-api.cn-huabei-1.xf-yun.com/v2',
+          api: 'openai-completions',
+          apiKey: 'OPENAI_API_KEY',
+          models: [{ id: 'xopqwen35v35b', name: 'xopqwen35v35b' }],
+        },
+      },
+      defaultModel: 'custom-customc5/xopqwen35v35b',
+    });
+    mocks.listProviderAccounts.mockResolvedValue([]);
+
+    await service.listAccounts();
+
+    expect(mocks.storeApiKey).not.toHaveBeenCalled();
   });
 });

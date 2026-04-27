@@ -1,24 +1,36 @@
 /**
  * Main Layout Component
- * TitleBar at top, then sidebar + content below.
+ * When sidebar is expanded: Left-right split (Sidebar full height + Content area)
+ * When sidebar is collapsed: Top-bottom split (Horizontal bar at top + Content area below)
+ * macOS: drag region + native traffic lights live at the top of the Sidebar/bar.
+ * Windows: drag region + custom window controls live at the top of the Sidebar/bar.
  */
 import { Outlet } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
-import { TitleBar } from './TitleBar';
+import { useSettingsStore } from '@/stores/settings';
 
 export function MainLayout() {
-  return (
-    <div className="flex h-screen flex-col overflow-hidden bg-background">
-      {/* Title bar: drag region on macOS, icon + controls on Windows */}
-      <TitleBar />
+  const sidebarCollapsed = useSettingsStore((state) => state.sidebarCollapsed);
 
-      {/* Below the title bar: sidebar + content */}
-      <div className="flex flex-1 overflow-hidden">
+  if (sidebarCollapsed) {
+    // Collapsed: horizontal top bar + content below
+    return (
+      <div className="flex h-screen flex-col overflow-hidden bg-background">
         <Sidebar />
         <main className="flex-1 overflow-auto p-6">
           <Outlet />
         </main>
       </div>
+    );
+  }
+
+  // Expanded: vertical sidebar + content side-by-side
+  return (
+    <div className="flex h-screen overflow-hidden bg-background">
+      <Sidebar />
+      <main className="flex-1 overflow-auto p-6">
+        <Outlet />
+      </main>
     </div>
   );
 }

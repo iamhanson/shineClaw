@@ -6,6 +6,12 @@ import { create } from 'zustand';
 import { hostApiFetch } from '@/lib/host-api';
 import type { CronJob, CronJobCreateInput, CronJobUpdateInput } from '../types/cron';
 
+function isCronJob(value: unknown): value is CronJob {
+  if (!value || typeof value !== 'object') return false;
+  const record = value as Record<string, unknown>;
+  return typeof record.id === 'string' && typeof record.name === 'string';
+}
+
 interface CronState {
   jobs: CronJob[];
   loading: boolean;
@@ -31,6 +37,9 @@ export const useCronStore = create<CronState>((set) => ({
     
     try {
       const result = await hostApiFetch<CronJob[]>('/api/cron/jobs');
+      if (!Array.isArray(result)) {
+        throw new Error('Invalid cron jobs response');
+      }
       set({ jobs: result, loading: false });
     } catch (error) {
       set({ error: String(error), loading: false });
@@ -43,6 +52,9 @@ export const useCronStore = create<CronState>((set) => ({
         method: 'POST',
         body: JSON.stringify(input),
       });
+      if (!isCronJob(job)) {
+        throw new Error('Create cron job failed: invalid response from backend');
+      }
       set((state) => ({ jobs: [...state.jobs, job] }));
       return job;
     } catch (error) {
@@ -53,15 +65,23 @@ export const useCronStore = create<CronState>((set) => ({
   
   updateJob: async (id, input) => {
     try {
-      await hostApiFetch(`/api/cron/jobs/${encodeURIComponent(id)}`, {
+      const updated = await hostApiFetch<CronJob>(`/api/cron/jobs/${encodeURIComponent(id)}`, {
         method: 'PUT',
         body: JSON.stringify(input),
       });
+      if (!isCronJob(updated)) {
+        throw new Error('Update cron job failed: invalid response from backend');
+      }
       set((state) => ({
-        jobs: state.jobs.map((job) =>
-          job.id === id ? { ...job, ...input, updatedAt: new Date().toISOString() } : job
-        ),
+        jobs: state.jobs.map((job) => (job.id === id ? updated : job)),
       }));
+      // Re-fetch once to guarantee target/delivery and computed fields are aligned with gateway state.
+      try {
+        const jobs = await hostApiFetch<CronJob[]>('/api/cron/jobs');
+        set({ jobs });
+      } catch {
+        // Keep optimistic replacement above if refresh fails.
+      }
     } catch (error) {
       console.error('Failed to update cron job:', error);
       throw error;

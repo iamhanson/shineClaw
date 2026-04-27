@@ -211,6 +211,37 @@ for (const [realPath, pkgName] of collected) {
   }
 }
 
+function normalizeHttpsProxyAgent(outputDir) {
+  const pkgPath = path.join(outputDir, 'node_modules', 'https-proxy-agent', 'package.json');
+  if (!fs.existsSync(pkgPath)) return false;
+
+  const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+  const importEntry =
+    typeof pkg.exports?.['.']?.import === 'string'
+      ? pkg.exports['.'].import
+      : typeof pkg.exports?.import === 'string'
+        ? pkg.exports.import
+        : typeof pkg.exports?.import?.default === 'string'
+          ? pkg.exports.import.default
+          : typeof pkg.exports?.['.']?.import?.default === 'string'
+            ? pkg.exports['.'].import.default
+            : './dist/index.js';
+
+  pkg.exports = {
+    '.': {
+      import: importEntry,
+      default: importEntry,
+    },
+  };
+
+  fs.writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`, 'utf8');
+  return true;
+}
+
+if (normalizeHttpsProxyAgent(OUTPUT)) {
+  echo`   Normalized https-proxy-agent exports in bundled openclaw`;
+}
+
 // 6. Clean up the bundle to reduce package size
 //
 // This removes platform-agnostic waste: dev artifacts, docs, source maps,

@@ -40,7 +40,9 @@
         "discordChannelIdDesc": "右键点击 Discord 频道 → 复制频道 ID",
         "enableImmediately": "立即启用",
         "enableImmediatelyDesc": "创建后立即开始运行此任务",
-        "saveChanges": "保存更改"
+        "saveChanges": "保存更改",
+        "skill": "技能（可选）",
+        "skillNone": "不指定技能"
     },
     "presets": {
         "everyMinute": "每分钟",

@@ -19,11 +19,14 @@ export function ChatToolbar() {
   const toggleThinking = useChatStore((s) => s.toggleThinking);
   const currentAgentId = useChatStore((s) => s.currentAgentId);
   const agents = useAgentsStore((s) => s.agents);
-  const { t } = useTranslation('chat');
-  const currentAgentName = useMemo(
-    () => (agents ?? []).find((agent) => agent.id === currentAgentId)?.name ?? currentAgentId,
-    [agents, currentAgentId],
+  const { t } = useTranslation(['chat', 'agents']);
+  const currentAgent = useMemo(
+    () => (agents ?? []).find((agent) => agent.id === currentAgentId),
+    [agents, currentAgentId]
   );
+  const currentAgentName = currentAgent?.isDefault
+    ? t('agents:defaultAgentName')
+    : (currentAgent?.name ?? currentAgentId);
 
   return (
     <div className="flex items-center gap-2">
@@ -55,10 +58,7 @@ export function ChatToolbar() {
           <Button
             variant="ghost"
             size="icon"
-            className={cn(
-              'h-8 w-8',
-              showThinking && 'bg-primary/10 text-primary',
-            )}
+            className={cn('h-8 w-8', showThinking && 'bg-primary/10 text-primary')}
             onClick={toggleThinking}
           >
             <Brain className="h-4 w-4" />

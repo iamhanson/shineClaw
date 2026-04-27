@@ -58,9 +58,11 @@ interface ChannelConfigModalProps {
   onChannelSaved?: (channelType: ChannelType) => void | Promise<void>;
 }
 
-const inputClasses = 'h-[44px] rounded-xl font-mono text-[13px] bg-[#eeece3] dark:bg-muted border-black/10 dark:border-white/10 focus-visible:ring-2 focus-visible:ring-blue-500/50 focus-visible:border-blue-500 shadow-sm transition-all text-foreground placeholder:text-foreground/40';
+const inputClasses =
+  'h-[44px] rounded-xl font-mono text-[13px] bg-muted dark:bg-muted border-black/10 dark:border-white/10 focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:border-primary shadow-sm transition-all text-foreground placeholder:text-foreground/40';
 const labelClasses = 'text-[14px] text-foreground/80 font-bold';
-const outlineButtonClasses = 'h-9 text-[13px] font-medium rounded-full px-4 border-black/10 dark:border-white/10 bg-transparent hover:bg-black/5 dark:hover:bg-white/5 shadow-none text-foreground/80 hover:text-foreground';
+const outlineButtonClasses =
+  'h-9 text-[13px] font-medium rounded-full px-4 border-black/10 dark:border-white/10 bg-transparent hover:bg-black/5 dark:hover:bg-white/5 shadow-none text-foreground/80 hover:text-foreground';
 const primaryButtonClasses = 'h-9 text-[13px] font-medium rounded-full px-4 shadow-none';
 
 export function ChannelConfigModal({
@@ -94,6 +96,8 @@ export function ChannelConfigModal({
     errors: string[];
     warnings: string[];
   } | null>(null);
+  const [recipientOptions, setRecipientOptions] = useState<string[]>([]);
+  const [showCustomRecipientInput, setShowCustomRecipientInput] = useState(false);
 
   const meta: ChannelMeta | null = selectedType ? CHANNEL_META[selectedType] : null;
   const shouldUseCredentialValidation = selectedType !== 'feishu';
@@ -147,7 +151,9 @@ export function ChannelConfigModal({
 
     (async () => {
       try {
-        const accountParam = resolvedAccountId ? `?accountId=${encodeURIComponent(resolvedAccountId)}` : '';
+        const accountParam = resolvedAccountId
+          ? `?accountId=${encodeURIComponent(resolvedAccountId)}`
+          : '';
         const result = await hostApiFetch<{ success: boolean; values?: Record<string, string> }>(
           `/api/channels/config/${encodeURIComponent(selectedType)}${accountParam}`
         );
@@ -173,7 +179,14 @@ export function ChannelConfigModal({
     return () => {
       cancelled = true;
     };
-  }, [allowExistingConfig, configuredTypes, initialConfigValues, resolvedAccountId, selectedType, showChannelName]);
+  }, [
+    allowExistingConfig,
+    configuredTypes,
+    initialConfigValues,
+    resolvedAccountId,
+    selectedType,
+    showChannelName,
+  ]);
 
   useEffect(() => {
     if (selectedType && !loadingConfig && showChannelName && firstInputRef.current) {
@@ -181,24 +194,83 @@ export function ChannelConfigModal({
     }
   }, [selectedType, loadingConfig, showChannelName]);
 
-  const finishSave = useCallback(async (channelType: ChannelType) => {
-    const displayName = showChannelName && channelName.trim()
-      ? channelName.trim()
-      : CHANNEL_NAMES[channelType];
-    const existingChannel = channels.find((channel) => channel.type === channelType);
-
-    if (!existingChannel) {
-      await addChannel({
-        type: channelType,
-        name: displayName,
-        token: meta?.configFields[0]?.key ? configValues[meta.configFields[0].key] : undefined,
-      });
-    } else {
-      await fetchChannels();
+  useEffect(() => {
+    if (selectedType !== 'feishu') {
+      setRecipientOptions([]);
+      setShowCustomRecipientInput(false);
+      return;
     }
 
-    await onChannelSaved?.(channelType);
-  }, [addChannel, channelName, channels, configValues, fetchChannels, meta?.configFields, onChannelSaved, showChannelName]);
+    let cancelled = false;
+    const activeAccountId = resolvedAccountId?.trim() || '';
+
+    (async () => {
+      const options = new Set<string>();
+      const currentValue = configValues.defaultRecipientId?.trim();
+      if (currentValue) {
+        options.add(currentValue);
+      }
+
+      try {
+        const query = new URLSearchParams({
+          channelType: 'feishu',
+          ...(activeAccountId ? { accountId: activeAccountId } : {}),
+          limit: '100',
+        });
+        const response = await hostApiFetch<{ success?: boolean; recipients?: string[] }>(
+          `/api/channels/recipient-options?${query.toString()}`
+        );
+        for (const recipientId of response.recipients || []) {
+          const candidate = recipientId?.trim();
+          if (candidate) options.add(candidate);
+        }
+      } catch {
+        // Ignore candidates fetch errors; manual input remains available.
+      }
+
+      const nextOptions = Array.from(options).sort((left, right) => left.localeCompare(right));
+      if (cancelled) return;
+
+      setRecipientOptions(nextOptions);
+      if (currentValue && !nextOptions.includes(currentValue)) {
+        setShowCustomRecipientInput(true);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [configValues.defaultRecipientId, resolvedAccountId, selectedType]);
+
+  const finishSave = useCallback(
+    async (channelType: ChannelType) => {
+      const displayName =
+        showChannelName && channelName.trim() ? channelName.trim() : CHANNEL_NAMES[channelType];
+      const existingChannel = channels.find((channel) => channel.type === channelType);
+
+      if (!existingChannel) {
+        await addChannel({
+          type: channelType,
+          name: displayName,
+          token: meta?.configFields[0]?.key ? configValues[meta.configFields[0].key] : undefined,
+        });
+      } else {
+        await fetchChannels();
+      }
+
+      await onChannelSaved?.(channelType);
+    },
+    [
+      addChannel,
+      channelName,
+      channels,
+      configValues,
+      fetchChannels,
+      meta?.configFields,
+      onChannelSaved,
+      showChannelName,
+    ]
+  );
 
   const finishSaveRef = useRef(finishSave);
   const onCloseRef = useRef(onClose);
@@ -248,13 +320,22 @@ export function ChannelConfigModal({
     const onSuccess = async (...args: unknown[]) => {
       const data = args[0] as { accountId?: string } | undefined;
       void data?.accountId;
-      toast.success(translateRef.current('toast.qrConnected', { name: CHANNEL_NAMES[channelType] }));
+      toast.success(
+        translateRef.current('toast.qrConnected', { name: CHANNEL_NAMES[channelType] })
+      );
       try {
         if (channelType === 'whatsapp') {
-          const saveResult = await hostApiFetch<{ success?: boolean; error?: string }>('/api/channels/config', {
-            method: 'POST',
-            body: JSON.stringify({ channelType: 'whatsapp', config: { enabled: true }, accountId: resolvedAccountId }),
-          });
+          const saveResult = await hostApiFetch<{ success?: boolean; error?: string }>(
+            '/api/channels/config',
+            {
+              method: 'POST',
+              body: JSON.stringify({
+                channelType: 'whatsapp',
+                config: { enabled: true },
+                accountId: resolvedAccountId,
+              }),
+            }
+          );
           if (!saveResult?.success) {
             throw new Error(saveResult?.error || 'Failed to save WhatsApp config');
           }
@@ -274,17 +355,26 @@ export function ChannelConfigModal({
     };
 
     const onError = (...args: unknown[]) => {
-      const err = typeof args[0] === 'string'
-        ? args[0]
-        : String((args[0] as { message?: string } | undefined)?.message || args[0]);
-      toast.error(translateRef.current('toast.qrFailed', { name: CHANNEL_NAMES[channelType], error: err }));
+      const err =
+        typeof args[0] === 'string'
+          ? args[0]
+          : String((args[0] as { message?: string } | undefined)?.message || args[0]);
+      toast.error(
+        translateRef.current('toast.qrFailed', { name: CHANNEL_NAMES[channelType], error: err })
+      );
       setQrCode(null);
       setConnecting(false);
     };
 
     const removeQrListener = subscribeHostEvent(buildQrChannelEventName(channelType, 'qr'), onQr);
-    const removeSuccessListener = subscribeHostEvent(buildQrChannelEventName(channelType, 'success'), onSuccess);
-    const removeErrorListener = subscribeHostEvent(buildQrChannelEventName(channelType, 'error'), onError);
+    const removeSuccessListener = subscribeHostEvent(
+      buildQrChannelEventName(channelType, 'success'),
+      onSuccess
+    );
+    const removeErrorListener = subscribeHostEvent(
+      buildQrChannelEventName(channelType, 'error'),
+      onError
+    );
 
     return () => {
       removeQrListener();
@@ -293,7 +383,7 @@ export function ChannelConfigModal({
       hostApiFetch(`/api/channels/${encodeURIComponent(channelType)}/cancel`, {
         method: 'POST',
         body: JSON.stringify(resolvedAccountId ? { accountId: resolvedAccountId } : {}),
-      }).catch(() => { });
+      }).catch(() => {});
     };
   }, [meta?.connectionType, resolvedAccountId, selectedType]);
 
@@ -353,7 +443,9 @@ export function ChannelConfigModal({
           setConnecting(false);
           return;
         }
-        const duplicateExists = existingAccountIds.some((id) => id === nextAccountId && id !== (accountId || '').trim());
+        const duplicateExists = existingAccountIds.some(
+          (id) => id === nextAccountId && id !== (accountId || '').trim()
+        );
         if (duplicateExists) {
           toast.error(t('account.accountIdExists', { accountId: nextAccountId }));
           setConnecting(false);
@@ -478,13 +570,13 @@ export function ChannelConfigModal({
       }}
     >
       <Card
-        className="w-full max-w-3xl max-h-[90vh] flex flex-col rounded-3xl border-0 shadow-2xl bg-[#f3f1e9] dark:bg-card overflow-hidden"
+        className="w-full max-w-3xl max-h-[90vh] flex flex-col rounded-xl border-0 shadow-2xl bg-card dark:bg-card overflow-hidden"
         onMouseDown={(event) => event.stopPropagation()}
         onClick={(event) => event.stopPropagation()}
       >
         <CardHeader className="flex flex-row items-start justify-between pb-2 shrink-0">
           <div>
-            <CardTitle className="text-2xl font-serif font-normal tracking-tight">
+            <CardTitle className="text-2xl font-heading font-normal tracking-tight">
               {selectedType
                 ? isExistingConfig
                   ? t('dialog.updateTitle', { name: CHANNEL_NAMES[selectedType] })
@@ -494,7 +586,9 @@ export function ChannelConfigModal({
             <CardDescription className="text-[15px] mt-1 text-foreground/70">
               {selectedType && isExistingConfig
                 ? t('dialog.existingDesc')
-                : meta ? t(meta.description.replace('channels:', '')) : t('dialog.selectDesc')}
+                : meta
+                  ? t(meta.description.replace('channels:', ''))
+                  : t('dialog.selectDesc')}
             </CardDescription>
           </div>
           <Button
@@ -517,7 +611,7 @@ export function ChannelConfigModal({
                     key={type}
                     onClick={() => setSelectedType(type)}
                     className={cn(
-                      'group flex items-start gap-4 p-4 rounded-2xl transition-all text-left border relative overflow-hidden bg-[#eeece3] dark:bg-muted shadow-sm',
+                      'group flex items-start gap-4 p-4 rounded-2xl transition-all text-left border relative overflow-hidden bg-muted dark:bg-muted shadow-sm',
                       isConfigured
                         ? 'border-green-500/40 bg-green-500/5 dark:bg-green-500/10'
                         : 'border-black/5 dark:border-white/10 hover:bg-black/5 dark:hover:bg-white/5'
@@ -528,7 +622,9 @@ export function ChannelConfigModal({
                     </div>
                     <div className="flex flex-col flex-1 min-w-0 py-0.5 mt-1">
                       <div className="flex items-center gap-2 mb-1">
-                        <p className="text-[16px] font-semibold text-foreground truncate">{channelMeta.name}</p>
+                        <p className="text-[16px] font-semibold text-foreground truncate">
+                          {channelMeta.name}
+                        </p>
                         {channelMeta.isPlugin && (
                           <Badge
                             variant="secondary"
@@ -542,7 +638,9 @@ export function ChannelConfigModal({
                         {t(channelMeta.description.replace('channels:', ''))}
                       </p>
                       <p className="text-[12px] font-medium text-muted-foreground/80 mt-2">
-                        {channelMeta.connectionType === 'qr' ? t('dialog.qrCode') : t('dialog.token')}
+                        {channelMeta.connectionType === 'qr'
+                          ? t('dialog.qrCode')
+                          : t('dialog.token')}
                       </p>
                     </div>
                     {isConfigured && (
@@ -556,9 +654,15 @@ export function ChannelConfigModal({
             </div>
           ) : qrCode ? (
             <div className="text-center space-y-6">
-              <div className="bg-[#eeece3] dark:bg-muted p-4 rounded-3xl inline-block shadow-sm border border-black/10 dark:border-white/10">
-                {qrCode.startsWith('data:image') || qrCode.startsWith('http://') || qrCode.startsWith('https://') ? (
-                  <img src={qrCode} alt="Scan QR Code" className="w-64 h-64 object-contain rounded-2xl" />
+              <div className="bg-muted dark:bg-muted p-4 rounded-xl inline-block shadow-sm border border-black/10 dark:border-white/10">
+                {qrCode.startsWith('data:image') ||
+                qrCode.startsWith('http://') ||
+                qrCode.startsWith('https://') ? (
+                  <img
+                    src={qrCode}
+                    alt="Scan QR Code"
+                    className="w-64 h-64 object-contain rounded-2xl"
+                  />
                 ) : (
                   <div className="w-64 h-64 bg-white dark:bg-background rounded-2xl flex items-center justify-center">
                     <QrCode className="h-32 w-32 text-gray-400" />
@@ -582,9 +686,11 @@ export function ChannelConfigModal({
               </div>
             </div>
           ) : loadingConfig ? (
-            <div className="flex items-center justify-center py-10 rounded-2xl bg-[#eeece3] dark:bg-muted border border-black/10 dark:border-white/10">
+            <div className="flex items-center justify-center py-10 rounded-2xl bg-muted dark:bg-muted border border-black/10 dark:border-white/10">
               <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-              <span className="ml-2 text-[14px] text-muted-foreground">{t('dialog.loadingConfig')}</span>
+              <span className="ml-2 text-[14px] text-muted-foreground">
+                {t('dialog.loadingConfig')}
+              </span>
             </div>
           ) : (
             <div className="space-y-6">
@@ -595,7 +701,7 @@ export function ChannelConfigModal({
                 </div>
               )}
 
-              <div className="bg-[#eeece3] dark:bg-muted p-4 rounded-2xl space-y-4 shadow-sm border border-black/10 dark:border-white/10">
+              <div className="bg-muted dark:bg-muted p-4 rounded-2xl space-y-4 shadow-sm border border-black/10 dark:border-white/10">
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <p className={labelClasses}>{t('dialog.howToConnect')}</p>
@@ -622,7 +728,9 @@ export function ChannelConfigModal({
 
               {showChannelName && (
                 <div className="space-y-2.5">
-                  <Label htmlFor="name" className={labelClasses}>{t('dialog.channelName')}</Label>
+                  <Label htmlFor="name" className={labelClasses}>
+                    {t('dialog.channelName')}
+                  </Label>
                   <Input
                     ref={firstInputRef}
                     id="name"
@@ -636,7 +744,9 @@ export function ChannelConfigModal({
 
               {showAccountIdEditor && (
                 <div className="space-y-2.5">
-                  <Label htmlFor="account-id" className={labelClasses}>{t('account.customIdLabel')}</Label>
+                  <Label htmlFor="account-id" className={labelClasses}>
+                    {t('account.customIdLabel')}
+                  </Label>
                   <Input
                     id="account-id"
                     value={accountIdInput}
@@ -657,6 +767,13 @@ export function ChannelConfigModal({
                     onChange={(value) => updateConfigValue(field.key, value)}
                     showSecret={showSecrets[field.key] || false}
                     onToggleSecret={() => toggleSecretVisibility(field.key)}
+                    recipientOptions={field.key === 'defaultRecipientId' ? recipientOptions : undefined}
+                    showCustomRecipientInput={field.key === 'defaultRecipientId' ? showCustomRecipientInput : false}
+                    onToggleCustomRecipientInput={
+                      field.key === 'defaultRecipientId'
+                        ? () => setShowCustomRecipientInput((prev) => !prev)
+                        : undefined
+                    }
                   />
                 ))}
               </div>
@@ -678,7 +795,9 @@ export function ChannelConfigModal({
                     )}
                     <div className="min-w-0">
                       <h4 className="font-medium mb-1">
-                        {validationResult.valid ? t('dialog.credentialsVerified') : t('dialog.validationFailed')}
+                        {validationResult.valid
+                          ? t('dialog.credentialsVerified')
+                          : t('dialog.validationFailed')}
                       </h4>
                       {validationResult.errors.length > 0 && (
                         <ul className="list-disc list-inside space-y-0.5">
@@ -690,13 +809,17 @@ export function ChannelConfigModal({
                       {validationResult.valid && validationResult.warnings.length > 0 && (
                         <div className="mt-1 text-green-600 dark:text-green-400 space-y-0.5">
                           {validationResult.warnings.map((info, index) => (
-                            <p key={index} className="text-xs">{info}</p>
+                            <p key={index} className="text-xs">
+                              {info}
+                            </p>
                           ))}
                         </div>
                       )}
                       {!validationResult.valid && validationResult.warnings.length > 0 && (
                         <div className="mt-2 text-yellow-600 dark:text-yellow-500">
-                          <p className="font-medium text-xs uppercase mb-1">{t('dialog.warnings')}</p>
+                          <p className="font-medium text-xs uppercase mb-1">
+                            {t('dialog.warnings')}
+                          </p>
                           <ul className="list-disc list-inside space-y-0.5">
                             {validationResult.warnings.map((warn, index) => (
                               <li key={index}>{warn}</li>
@@ -737,20 +860,28 @@ export function ChannelConfigModal({
                     onClick={() => {
                       void handleConnect();
                     }}
-                    disabled={connecting || !isFormValid() || (showAccountIdEditor && !accountIdInput.trim())}
+                    disabled={
+                      connecting ||
+                      !isFormValid() ||
+                      (showAccountIdEditor && !accountIdInput.trim())
+                    }
                     className={primaryButtonClasses}
                   >
                     {connecting ? (
                       <>
                         <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                        {meta?.connectionType === 'qr' ? t('dialog.generatingQR') : t('dialog.validatingAndSaving')}
+                        {meta?.connectionType === 'qr'
+                          ? t('dialog.generatingQR')
+                          : t('dialog.validatingAndSaving')}
                       </>
                     ) : meta?.connectionType === 'qr' ? (
                       t('dialog.generateQRCode')
                     ) : (
                       <>
                         <Check className="h-4 w-4 mr-2" />
-                        {isExistingConfig ? t('dialog.updateAndReconnect') : t('dialog.saveAndConnect')}
+                        {isExistingConfig
+                          ? t('dialog.updateAndReconnect')
+                          : t('dialog.saveAndConnect')}
                       </>
                     )}
                   </Button>
@@ -770,6 +901,9 @@ interface ConfigFieldProps {
   onChange: (value: string) => void;
   showSecret: boolean;
   onToggleSecret: () => void;
+  recipientOptions?: string[];
+  showCustomRecipientInput?: boolean;
+  onToggleCustomRecipientInput?: () => void;
 }
 
 function ChannelLogo({ type }: { type: ChannelType }) {
@@ -795,9 +929,64 @@ function ChannelLogo({ type }: { type: ChannelType }) {
   }
 }
 
-function ConfigField({ field, value, onChange, showSecret, onToggleSecret }: ConfigFieldProps) {
+function ConfigField({
+  field,
+  value,
+  onChange,
+  showSecret,
+  onToggleSecret,
+  recipientOptions,
+  showCustomRecipientInput,
+  onToggleCustomRecipientInput,
+}: ConfigFieldProps) {
   const { t } = useTranslation('channels');
   const isPassword = field.type === 'password';
+  const isRecipientField = field.key === 'defaultRecipientId';
+
+  if (isRecipientField) {
+    const normalizedValue = value.trim();
+    const options = Array.from(new Set([...(recipientOptions || []), ...(normalizedValue ? [normalizedValue] : [])]));
+
+    return (
+      <div className="space-y-2.5">
+        <Label htmlFor={field.key} className={labelClasses}>
+          {t(field.label)}
+        </Label>
+        <div className="flex gap-2">
+          <select
+            id={field.key}
+            value={options.includes(normalizedValue) ? normalizedValue : ''}
+            onChange={(event) => onChange(event.target.value)}
+            className="h-[44px] w-full rounded-xl px-3 font-mono text-[13px] bg-muted dark:bg-muted border border-black/10 dark:border-white/10 focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary text-foreground"
+          >
+            <option value="">选择接收人 ID（可选）</option>
+            {options.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+          <Button
+            type="button"
+            variant="outline"
+            className="h-[44px] rounded-xl px-3 shrink-0"
+            onClick={() => onToggleCustomRecipientInput?.()}
+          >
+            手动输入
+          </Button>
+        </div>
+        {showCustomRecipientInput && (
+          <Input
+            type="text"
+            placeholder={field.placeholder ? t(field.placeholder) : '例如：ou_1234567890'}
+            value={value}
+            onChange={(event) => onChange(event.target.value)}
+            className={inputClasses}
+          />
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-2.5">
@@ -820,16 +1009,14 @@ function ConfigField({ field, value, onChange, showSecret, onToggleSecret }: Con
             variant="outline"
             size="icon"
             onClick={onToggleSecret}
-            className="h-[44px] w-[44px] rounded-xl bg-[#eeece3] dark:bg-muted border-black/10 dark:border-white/10 text-muted-foreground hover:text-foreground shrink-0 shadow-sm"
+            className="h-[44px] w-[44px] rounded-xl bg-muted dark:bg-muted border-black/10 dark:border-white/10 text-muted-foreground hover:text-foreground shrink-0 shadow-sm"
           >
             {showSecret ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
           </Button>
         )}
       </div>
       {field.description && (
-        <p className="text-[13px] text-muted-foreground leading-relaxed">
-          {t(field.description)}
-        </p>
+        <p className="text-[13px] text-muted-foreground leading-relaxed">{t(field.description)}</p>
       )}
       {field.envVar && (
         <p className="text-[12px] text-muted-foreground/70 font-mono">

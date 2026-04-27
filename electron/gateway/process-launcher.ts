@@ -33,7 +33,7 @@ const GATEWAY_FETCH_PRELOAD_SOURCE = `'use strict';
       delete flat['x-title'];
       delete flat['X-Title'];
       flat['HTTP-Referer'] = 'https://claw-x.com';
-      flat['X-Title'] = 'ClawX';
+      flat['X-Title'] = '阿山';
       init.headers = flat;
     }
     return _f.call(globalThis, input, init);
@@ -111,10 +111,12 @@ export async function launchGatewayProcess(options: {
     channelStartupSummary,
   } = options.launchContext;
 
+  const safeGatewayArgs = gatewayArgs.map((arg) => String(arg));
+
   logger.info(
-    `Starting Gateway process (mode=${mode}, port=${options.port}, entry="${entryScript}", args="${options.sanitizeSpawnArgs(gatewayArgs).join(' ')}", cwd="${openclawDir}", bundledBin=${binPathExists ? 'yes' : 'no'}, providerKeys=${loadedProviderKeyCount}, channels=${channelStartupSummary}, proxy=${proxySummary})`,
+    `Starting Gateway process (mode=${mode}, port=${options.port}, entry="${entryScript}", args="${options.sanitizeSpawnArgs(safeGatewayArgs).join(' ')}", cwd="${openclawDir}", bundledBin=${binPathExists ? 'yes' : 'no'}, providerKeys=${loadedProviderKeyCount}, channels=${channelStartupSummary}, proxy=${proxySummary})`,
   );
-  const lastSpawnSummary = `mode=${mode}, entry="${entryScript}", args="${options.sanitizeSpawnArgs(gatewayArgs).join(' ')}", cwd="${openclawDir}"`;
+  const lastSpawnSummary = `mode=${mode}, entry="${entryScript}", args="${options.sanitizeSpawnArgs(safeGatewayArgs).join(' ')}", cwd="${openclawDir}"`;
 
   const runtimeEnv = { ...forkEnv };
   if (!app.isPackaged) {
@@ -132,7 +134,7 @@ export async function launchGatewayProcess(options: {
   }
 
   return await new Promise<{ child: Electron.UtilityProcess; lastSpawnSummary: string }>((resolve, reject) => {
-    const child = utilityProcess.fork(entryScript, gatewayArgs, {
+    const child = utilityProcess.fork(entryScript, safeGatewayArgs, {
       cwd: openclawDir,
       stdio: 'pipe',
       env: runtimeEnv as NodeJS.ProcessEnv,

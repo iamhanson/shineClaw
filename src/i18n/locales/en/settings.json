@@ -1,6 +1,13 @@
 {
-  "title": "Settings",
-  "subtitle": "Configure your ClawX experience",
+  "title": "System Settings",
+  "subtitle": "Configure your Ashan experience",
+  "nav": {
+    "systemSettings": "System Settings",
+    "models": "Model Management",
+    "agents": "Agents",
+    "channels": "Channels",
+    "skills": "Skills"
+  },
   "appearance": {
     "title": "General",
     "description": "Customize the look and feel",
@@ -9,8 +16,12 @@
     "dark": "Dark",
     "system": "System",
     "language": "Language",
+    "fontSize": "Font Size",
+    "fontSmall": "Small",
+    "fontStandard": "Standard",
+    "fontLarge": "Large",
     "launchAtStartup": "Launch at system startup",
-    "launchAtStartupDesc": "Automatically launch ClawX when you log in"
+    "launchAtStartupDesc": "Automatically launch Ashan when you log in"
   },
   "aiProviders": {
     "title": "AI Providers",
@@ -37,7 +48,7 @@
     "notRequired": "Not required",
     "empty": {
       "title": "No providers configured",
-      "desc": "Add an AI provider to start using ClawX",
+      "desc": "Add an AI provider to start using Ashan",
       "cta": "Add Your First Provider"
     },
     "dialog": {
@@ -52,6 +63,8 @@
       "replaceApiKeyHelp": "Leave this field empty if you want to keep the currently stored API key.",
       "baseUrl": "Base URL",
       "modelId": "Model ID",
+      "contextWindow": "Context Window",
+      "maxTokens": "Max Output Tokens",
       "codePlanPreset": "Code Plan Preset",
       "codePlanMode": "Code Plan",
       "useCodePlanPreset": "Use Ark Code Plan Preset",
@@ -60,7 +73,7 @@
       "protocol": "Protocol",
       "advancedConfig": "Advanced configuration",
       "userAgent": "User-Agent",
-      "userAgentPlaceholder": "ClawX/1.0",
+      "userAgentPlaceholder": "Ashan/1.0",
       "fallbackModels": "Fallback Models",
       "fallbackProviders": "Fallback Providers",
       "fallbackModelIds": "Fallback Model IDs",
@@ -134,7 +147,7 @@
     "appLogs": "Application Logs",
     "openFolder": "Open Folder",
     "autoStart": "Auto-start Gateway",
-    "autoStartDesc": "Start Gateway when ClawX launches",
+    "autoStartDesc": "Start Gateway when Ashan launches",
     "proxyTitle": "Proxy",
     "proxyDesc": "Route Electron and Gateway traffic through your local proxy client.",
     "proxyServer": "Proxy Server",
@@ -155,7 +168,7 @@
   },
   "updates": {
     "title": "Updates",
-    "description": "Keep ClawX up to date",
+    "description": "Keep Ashan up to date",
     "autoCheck": "Auto-check for updates",
     "autoCheckDesc": "Check for updates on startup",
     "autoDownload": "Auto-update",
@@ -167,6 +180,7 @@
       "downloaded": "Ready to install: v{{version}}",
       "autoInstalling": "Restarting to install update in {{seconds}}s...",
       "failed": "Update check failed",
+      "devModeSkipped": "Update check skipped in development mode (app is not packaged)",
       "latest": "You have the latest version",
       "check": "Check for updates to get the latest features"
     },
@@ -180,6 +194,7 @@
       "check": "Check for Updates"
     },
     "currentVersion": "Current Version",
+    "versionLabel": "Version {{version}}",
     "whatsNew": "What's New:",
     "errorDetails": "Error Details:",
     "help": "When auto-update is enabled, updates are downloaded and installed automatically."
@@ -209,7 +224,7 @@
     "devMode": "Developer Mode",
     "devModeDesc": "Show developer tools and shortcuts",
     "telemetry": "Anonymous Usage Data",
-    "telemetryDesc": "Allow providing anonymous basic usage data to improve ClawX"
+    "telemetryDesc": "Allow providing anonymous basic usage data to improve Ashan"
   },
   "developer": {
     "title": "Developer",
@@ -269,14 +284,27 @@
     "installMessage": "Install the \"openclaw\" command?",
     "installDetail": "This will create ~/.local/bin/openclaw. Ensure ~/.local/bin is on your PATH if you want to run it globally."
   },
+  "runtime": {
+    "title": "Runtime Environment",
+    "checking": "Checking dependencies...",
+    "notInstalled": "Not installed",
+    "recheck": "Recheck"
+  },
   "about": {
-    "title": "About",
-    "appName": "ClawX",
     "tagline": "Graphical AI Assistant",
     "basedOn": "Based on OpenClaw",
     "version": "Version {{version}}",
     "docs": "Website",
     "github": "GitHub",
     "faq": "FAQ"
+  },
+  "persona": {
+    "title": "Persona",
+    "label": "Default Persona",
+    "help": "Used as a preface persona instruction for each chat message. Leave empty to disable.",
+    "placeholder": "Example: You are a rigorous, concise senior engineer.",
+    "save": "Save Persona",
+    "saved": "Persona saved",
+    "reset": "Clear"
   }
 }

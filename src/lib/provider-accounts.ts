@@ -19,6 +19,32 @@ export interface ProviderListItem {
   status?: ProviderWithKeyInfo;
 }
 
+const PROVIDER_KEY_ALIASES: Record<string, string> = {
+  'minimax-portal-cn': 'minimax-portal',
+};
+
+function isClawXGeneratedMultiProviderId(vendorId: string, providerId: string): boolean {
+  if (vendorId !== 'custom' && vendorId !== 'ollama') {
+    return false;
+  }
+  return new RegExp(`^(${vendorId})-[0-9a-f]{8}-`).test(providerId);
+}
+
+export function getOpenClawProviderKeyForAccount(account: Pick<ProviderAccount, 'id' | 'vendorId'>): string {
+  const providerId = account.id;
+  const vendorId = account.vendorId;
+
+  if (vendorId === 'custom' || vendorId === 'ollama') {
+    if (!isClawXGeneratedMultiProviderId(vendorId, providerId)) {
+      return providerId;
+    }
+    const suffix = providerId.replace(/-/g, '').slice(0, 8);
+    return `${vendorId}-${suffix}`;
+  }
+
+  return PROVIDER_KEY_ALIASES[vendorId] ?? vendorId;
+}
+
 export async function fetchProviderSnapshot(): Promise<ProviderSnapshot> {
   const [accounts, statuses, vendors, defaultInfo] = await Promise.all([
     hostApiFetch<ProviderAccount[]>('/api/provider-accounts'),

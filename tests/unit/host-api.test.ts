@@ -32,6 +32,20 @@ describe('host-api', () => {
     );
   });
 
+  it('throws message from unified non-ok envelope', async () => {
+    invokeIpcMock.mockResolvedValueOnce({
+      ok: true,
+      data: {
+        status: 500,
+        ok: false,
+        json: { error: 'Gateway not connected' },
+      },
+    });
+
+    const { hostApiFetch } = await import('@/lib/host-api');
+    await expect(hostApiFetch('/api/test')).rejects.toThrow('Gateway not connected');
+  });
+
   it('supports legacy proxy envelope response', async () => {
     invokeIpcMock.mockResolvedValueOnce({
       success: true,

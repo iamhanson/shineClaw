@@ -2,7 +2,9 @@
  * Application Menu Configuration
  * Creates the native application menu for macOS/Windows/Linux
  */
-import { Menu, app, shell, BrowserWindow } from 'electron';
+import { Menu, shell, BrowserWindow } from 'electron';
+
+const APP_NAME = '阿山';
 
 /**
  * Create application menu
@@ -15,7 +17,7 @@ export function createMenu(): void {
     ...(isMac
       ? [
           {
-            label: app.name,
+            label: APP_NAME,
             submenu: [
               { role: 'about' as const },
               { type: 'separator' as const },
@@ -87,7 +89,7 @@ export function createMenu(): void {
       submenu: [
         { role: 'reload' },
         { role: 'forceReload' },
-        { role: 'toggleDevTools' },
+        { role: 'toggleDevTools', accelerator: isMac ? 'Cmd+Shift+I' : 'Ctrl+Shift+I' },
         { type: 'separator' },
         { role: 'resetZoom' },
         { role: 'zoomIn' },

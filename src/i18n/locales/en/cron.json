@@ -40,7 +40,9 @@
         "discordChannelIdDesc": "Right-click the Discord channel → Copy Channel ID",
         "enableImmediately": "Enable immediately",
         "enableImmediatelyDesc": "Start running this task after creation",
-        "saveChanges": "Save Changes"
+        "saveChanges": "Save Changes",
+        "skill": "Skill (Optional)",
+        "skillNone": "No skill"
     },
     "presets": {
         "everyMinute": "Every minute",

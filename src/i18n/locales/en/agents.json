@@ -3,8 +3,11 @@
     "subtitle": "Create a new Agent to route specific channels to a separate personality or workspace.",
     "refresh": "Refresh",
     "addAgent": "Add Agent",
+    "importAgent": "Import Agent",
+    "importing": "Importing...",
     "gatewayWarning": "Gateway service is not running. Agent/channel changes may take a moment to apply.",
     "defaultBadge": "default",
+    "defaultAgentName": "Default Agent",
     "inherited": "inherited",
     "none": "none",
     "modelLine": "Model: {{model}}{{suffix}}",
@@ -17,12 +20,36 @@
         "description": "Create a new agent by name. You can optionally inherit the main agent's workspace bootstrap files.",
         "nameLabel": "Agent Name",
         "namePlaceholder": "Coding Helper",
+        "idLabel": "Agent ID",
+        "idPlaceholder": "Auto-generated from name, editable",
+        "idInvalid": "ID must use lowercase letters, numbers, and hyphens (not \"main\")",
+        "idDuplicate": "This ID already exists",
         "inheritWorkspaceLabel": "Inherit main agent workspace",
-        "inheritWorkspaceDescription": "Copy SOUL.md, AGENTS.md, etc. from the main agent"
+        "inheritWorkspaceDescription": "Copy SOUL.md, AGENTS.md, etc. from the main agent",
+        "modelLabel": "Model (Optional)",
+        "modelInheritDefault": "Inherit default model",
+        "customModelLabel": "Custom model ID (Optional)",
+        "customModelPlaceholder": "e.g. openai/gpt-4.1",
+        "skillsLabel": "Preferred skills (Optional)",
+        "skillsDescription": "Set commonly used skills for this agent (preference only).",
+        "noSkills": "No skills available",
+        "instructionsLabel": "Additional instructions (Optional)",
+        "instructionsPlaceholder": "Add persistent working preferences for this agent"
+    },
+    "importDialog": {
+        "title": "Import Agent",
+        "description": "Import an agent config from a local file or a remote URL.",
+        "fromFile": "Local file",
+        "fromUrl": "Remote URL",
+        "fileLabel": "File path",
+        "filePlaceholder": "Select a JSON / Markdown file",
+        "browse": "Browse",
+        "urlLabel": "URL",
+        "urlPlaceholder": "https://example.com/agent.json"
     },
     "deleteDialog": {
         "title": "Delete Agent",
-        "message": "Delete \"{{name}}\" from ClawX? This permanently deletes the agent and its ClawX-managed workspace, runtime, and session files from disk."
+        "message": "Delete \"{{name}}\" from Ashan? This permanently deletes the agent and its Ashan-managed workspace, runtime, and session files from disk."
     },
     "settingsDialog": {
         "title": "{{name}} Settings",
@@ -39,7 +66,7 @@
     },
     "removeChannelDialog": {
         "title": "Remove Channel",
-        "message": "Remove {{name}} from ClawX? This deletes the current channel configuration."
+        "message": "Remove {{name}} from Ashan? This deletes the current channel configuration."
     },
     "toast": {
         "agentCreated": "Agent created",
@@ -48,6 +75,8 @@
         "agentDeleteFailed": "Failed to delete agent: {{error}}",
         "agentUpdated": "Agent updated",
         "agentUpdateFailed": "Failed to update agent: {{error}}",
+        "agentImported": "Agent imported",
+        "agentImportFailed": "Failed to import agent: {{error}}",
         "channelAssigned": "{{channel}} assigned to agent",
         "channelAssignFailed": "Failed to assign channel: {{error}}",
         "channelRemoved": "{{channel}} removed",
